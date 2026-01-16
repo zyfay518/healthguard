@@ -1,180 +1,178 @@
-import express from 'express';
-import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 
-const app = express();
-
-// Environment variables (set these in Vercel)
+// Environment variables
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 
-// Validate environment variables
-if (!supabaseUrl || !supabaseServiceKey) {
-    console.error('FATAL: Missing SUPABASE_URL or SUPABASE_SERVICE_KEY environment variables');
-}
-
 let supabase = null;
-try {
-    if (supabaseUrl && supabaseServiceKey) {
-        supabase = createClient(supabaseUrl, supabaseServiceKey);
-    }
-} catch (initError) {
-    console.error('Failed to initialize Supabase client:', initError);
+if (supabaseUrl && supabaseServiceKey) {
+    supabase = createClient(supabaseUrl, supabaseServiceKey);
 }
 
-// Middleware
-app.use(cors({
-    origin: true,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    optionsSuccessStatus: 200
-}));
-app.options('*', cors());
-app.use(express.json());
+// Helper: Parse request body
+async function parseBody(req) {
+    return new Promise((resolve) => {
+        let data = '';
+        req.on('data', chunk => { data += chunk; });
+        req.on('end', () => {
+            try {
+                resolve(JSON.parse(data || '{}'));
+            } catch {
+                resolve({});
+            }
+        });
+    });
+}
 
-// Auth middleware
-const authMiddleware = async (req, res, next) => {
-    if (!supabase) {
-        return res.status(500).json({ error: 'Server configuration error: Supabase not initialized. Check SUPABASE_URL and SUPABASE_SERVICE_KEY.' });
-    }
+// Helper: Send JSON response
+function json(res, status, data) {
+    res.statusCode = status;
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.end(JSON.stringify(data));
+}
+
+// Helper: Get user from token
+async function getUser(req) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'No token provided' });
+        return null;
     }
     const token = authHeader.split(' ')[1];
     try {
         const { data: { user }, error } = await supabase.auth.getUser(token);
-        if (error || !user) {
-            return res.status(401).json({ error: 'Invalid token', details: error?.message });
+        if (error || !user) return null;
+        return user;
+    } catch {
+        return null;
+    }
+}
+
+// Main handler
+export default async function handler(req, res) {
+    // Handle CORS preflight
+    if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        res.statusCode = 200;
+        res.end();
+        return;
+    }
+
+    // Check Supabase initialization
+    if (!supabase) {
+        return json(res, 500, { error: 'Server not configured. Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.' });
+    }
+
+    const url = req.url || '';
+    const method = req.method || 'GET';
+
+    // Route: Health check
+    if (url === '/api' || url === '/api/') {
+        return json(res, 200, { status: 'HealthGuard API is running' });
+    }
+
+    // Auth required for all other routes
+    const user = await getUser(req);
+    if (!user) {
+        return json(res, 401, { error: 'Unauthorized' });
+    }
+
+    try {
+        // === VITALS ===
+        if (url.startsWith('/api/vitals')) {
+            if (method === 'GET') {
+                const { data, error } = await supabase
+                    .from('vitals')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('recorded_at', { ascending: false });
+                if (error) throw error;
+                return json(res, 200, data);
+            }
+            if (method === 'POST') {
+                const body = await parseBody(req);
+                const { data, error } = await supabase
+                    .from('vitals')
+                    .insert([{ user_id: user.id, ...body }])
+                    .select();
+                if (error) throw error;
+                return json(res, 200, data[0]);
+            }
+            if (method === 'DELETE') {
+                const body = await parseBody(req);
+                const { error } = await supabase
+                    .from('vitals')
+                    .delete()
+                    .in('id', body.ids || [])
+                    .eq('user_id', user.id);
+                if (error) throw error;
+                return json(res, 200, { success: true });
+            }
         }
-        req.user = user;
-        next();
+
+        // === SYMPTOMS ===
+        if (url.startsWith('/api/symptoms')) {
+            if (method === 'GET') {
+                const { data, error } = await supabase
+                    .from('symptoms')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('created_at', { ascending: false });
+                if (error) throw error;
+                return json(res, 200, data);
+            }
+            if (method === 'POST') {
+                const body = await parseBody(req);
+                const { data, error } = await supabase
+                    .from('symptoms')
+                    .insert([{ user_id: user.id, symptoms: body.symptoms, note: body.note, created_at: body.created_at || new Date().toISOString() }])
+                    .select();
+                if (error) throw error;
+                return json(res, 200, data[0]);
+            }
+            if (method === 'DELETE') {
+                const body = await parseBody(req);
+                const { error } = await supabase
+                    .from('symptoms')
+                    .delete()
+                    .in('id', body.ids || [])
+                    .eq('user_id', user.id);
+                if (error) throw error;
+                return json(res, 200, { success: true });
+            }
+        }
+
+        // === PROFILE ===
+        if (url.startsWith('/api/auth/profile')) {
+            if (method === 'GET') {
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .single();
+                if (error && error.code !== 'PGRST116') throw error;
+                return json(res, 200, data || {});
+            }
+            if (method === 'PUT') {
+                const body = await parseBody(req);
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .upsert({ user_id: user.id, ...body }, { onConflict: 'user_id' })
+                    .select();
+                if (error) throw error;
+                return json(res, 200, data[0]);
+            }
+        }
+
+        // Route not found
+        return json(res, 404, { error: 'Not found' });
+
     } catch (err) {
-        return res.status(401).json({ error: 'Auth failed', details: err.message });
+        console.error('API Error:', err);
+        return json(res, 500, { error: err.message || 'Internal server error' });
     }
-};
-
-// === VITALS ROUTES ===
-app.get('/api/vitals', authMiddleware, async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('vitals')
-            .select('*')
-            .eq('user_id', req.user.id)
-            .order('recorded_at', { ascending: false });
-        if (error) throw error;
-        res.json(data);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.post('/api/vitals', authMiddleware, async (req, res) => {
-    try {
-        const { systolic, diastolic, heart_rate, recorded_at } = req.body;
-        const { data, error } = await supabase
-            .from('vitals')
-            .insert([{ user_id: req.user.id, systolic, diastolic, heart_rate, recorded_at }])
-            .select();
-        if (error) throw error;
-        res.json(data[0]);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.delete('/api/vitals', authMiddleware, async (req, res) => {
-    try {
-        const { ids } = req.body;
-        const { error } = await supabase
-            .from('vitals')
-            .delete()
-            .in('id', ids)
-            .eq('user_id', req.user.id);
-        if (error) throw error;
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// === SYMPTOMS ROUTES ===
-app.get('/api/symptoms', authMiddleware, async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('symptoms')
-            .select('*')
-            .eq('user_id', req.user.id)
-            .order('created_at', { ascending: false });
-        if (error) throw error;
-        res.json(data);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.post('/api/symptoms', authMiddleware, async (req, res) => {
-    try {
-        const { symptoms, note, created_at } = req.body;
-        const { data, error } = await supabase
-            .from('symptoms')
-            .insert([{ user_id: req.user.id, symptoms, note, created_at: created_at || new Date().toISOString() }])
-            .select();
-        if (error) throw error;
-        res.json(data[0]);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.delete('/api/symptoms', authMiddleware, async (req, res) => {
-    try {
-        const { ids } = req.body;
-        const { error } = await supabase
-            .from('symptoms')
-            .delete()
-            .in('id', ids)
-            .eq('user_id', req.user.id);
-        if (error) throw error;
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// === AUTH/PROFILE ROUTES ===
-app.get('/api/auth/profile', authMiddleware, async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('user_id', req.user.id)
-            .single();
-        if (error && error.code !== 'PGRST116') throw error;
-        res.json(data || {});
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.put('/api/auth/profile', authMiddleware, async (req, res) => {
-    try {
-        const { nickname, avatar_url, height, weight } = req.body;
-        const { data, error } = await supabase
-            .from('profiles')
-            .upsert({ user_id: req.user.id, nickname, avatar_url, height, weight }, { onConflict: 'user_id' })
-            .select();
-        if (error) throw error;
-        res.json(data[0]);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Health check
-app.get('/api', (req, res) => {
-    res.json({ status: 'HealthGuard API is running', supabaseInitialized: !!supabase });
-});
-
-export default app;
+}
