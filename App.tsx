@@ -39,9 +39,11 @@ const AppContent: React.FC = () => {
 
   const checkInactivity = async () => {
     try {
+      if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') return; // Optional: verify in actual prod only
+
       const [vitals, symptoms] = await Promise.all([
-        vitalService.getAll(),
-        symptomService.getAll()
+        vitalService.getAll().catch(() => []),  // Fallback to empty array on fail
+        symptomService.getAll().catch(() => [])
       ]);
 
       const latestDates = [
@@ -49,7 +51,7 @@ const AppContent: React.FC = () => {
         ...symptoms.map((s: any) => new Date(s.created_at || s.recorded_at).getTime())
       ].filter(t => !isNaN(t));
 
-      if (latestDates.length === 0) return; // No data yet, don't logout
+      if (latestDates.length === 0) return;
 
       const latestTime = Math.max(...latestDates);
       const diffDays = (Date.now() - latestTime) / (1000 * 60 * 60 * 24);
@@ -59,7 +61,7 @@ const AppContent: React.FC = () => {
         await signOut();
       }
     } catch (error) {
-      console.error('Failed to check inactivity:', error);
+      console.warn('Inactivity check failed (ignoring):', error);
     }
   };
 
