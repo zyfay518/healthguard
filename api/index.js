@@ -8,7 +8,19 @@ const app = express();
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+// Validate environment variables
+if (!supabaseUrl || !supabaseServiceKey) {
+    console.error('FATAL: Missing SUPABASE_URL or SUPABASE_SERVICE_KEY environment variables');
+}
+
+let supabase = null;
+try {
+    if (supabaseUrl && supabaseServiceKey) {
+        supabase = createClient(supabaseUrl, supabaseServiceKey);
+    }
+} catch (initError) {
+    console.error('Failed to initialize Supabase client:', initError);
+}
 
 // Middleware
 app.use(cors({
@@ -23,6 +35,9 @@ app.use(express.json());
 
 // Auth middleware
 const authMiddleware = async (req, res, next) => {
+    if (!supabase) {
+        return res.status(500).json({ error: 'Server configuration error: Supabase not initialized. Check SUPABASE_URL and SUPABASE_SERVICE_KEY.' });
+    }
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'No token provided' });
@@ -31,12 +46,12 @@ const authMiddleware = async (req, res, next) => {
     try {
         const { data: { user }, error } = await supabase.auth.getUser(token);
         if (error || !user) {
-            return res.status(401).json({ error: 'Invalid token' });
+            return res.status(401).json({ error: 'Invalid token', details: error?.message });
         }
         req.user = user;
         next();
     } catch (err) {
-        return res.status(401).json({ error: 'Auth failed' });
+        return res.status(401).json({ error: 'Auth failed', details: err.message });
     }
 };
 
