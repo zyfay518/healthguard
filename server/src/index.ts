@@ -12,11 +12,15 @@ const port = process.env.PORT || 3000;
 
 // CORS configuration with explicit headers
 app.use(cors({
-    origin: true,
+    origin: true, // Allow all origins (or specify your Vercel URL)
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    optionsSuccessStatus: 200
 }));
+
+// Handle preflight requests strictly
+app.options('*', cors());
 app.use(express.json());
 
 // Routes
