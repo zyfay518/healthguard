@@ -34,18 +34,24 @@ function json(res, status, data) {
     res.end(JSON.stringify(data));
 }
 
-// Helper: Get user from token
+// Helper: Get user from token (Supabase v1 compatible)
 async function getUser(req) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        console.log('No auth header found');
         return null;
     }
     const token = authHeader.split(' ')[1];
     try {
-        const { data: { user }, error } = await supabase.auth.getUser(token);
-        if (error || !user) return null;
+        // Supabase v1 uses auth.api.getUser(token)
+        const { data: user, error } = await supabase.auth.api.getUser(token);
+        if (error || !user) {
+            console.log('Auth error:', error?.message);
+            return null;
+        }
         return user;
-    } catch {
+    } catch (err) {
+        console.log('Auth exception:', err.message);
         return null;
     }
 }
