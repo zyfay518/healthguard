@@ -17,6 +17,20 @@ api.interceptors.request.use(async (config) => {
     }
     return config;
 });
+// Response interceptor to debug errors
+api.interceptors.response.use(
+    response => response,
+    error => {
+        console.error('API Error Details:', {
+            url: error.config?.url,
+            method: error.config?.method,
+            status: error.response?.status,
+            data: error.response?.data,
+            headers: error.response?.headers
+        });
+        return Promise.reject(error);
+    }
+);
 
 export const vitalService = {
     getAll: async () => {
