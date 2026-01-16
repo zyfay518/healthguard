@@ -11,17 +11,24 @@
   "dependencies": {
     "@supabase/supabase-js": "^1.35.7",
     "axios": "^1.4.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.0.0",
     "jspdf-autotable": "^5.0.7",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.14.0",
-    "recharts": "^2.7.2"
+    "recharts": "^2.7.2",
+    "zod": "^4.3.5"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^16.18.0",
     "@vitejs/plugin-react": "^4.0.3",
+    "ts-node": "^10.9.2",
     "typescript": "^4.9.5",
     "vite": "^4.4.5"
   }
