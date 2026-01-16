@@ -82,12 +82,12 @@ const ExportReport: React.FC = () => {
     const end = new Date(dates.currentEnd);
     end.setHours(23, 59, 59, 999);
 
-    const vFiltered = vitals.filter(v => {
+    const vFiltered = (Array.isArray(vitals) ? vitals : []).filter(v => {
       const d = new Date(v.recorded_at);
       return d >= start && d <= end;
     });
 
-    const sFiltered = symptoms.filter(s => {
+    const sFiltered = (Array.isArray(symptoms) ? symptoms : []).filter(s => {
       const d = new Date(s.created_at);
       return d >= start && d <= end;
     });
