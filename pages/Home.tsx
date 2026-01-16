@@ -104,7 +104,7 @@ const Home: React.FC = () => {
 
   // Get last 7 days of data aggregated by day for chart
   const chartData = useMemo(() => {
-    if (vitals.length === 0) return [];
+    if (!vitals || !Array.isArray(vitals) || vitals.length === 0) return [];
 
     // Filter to last 7 days
     const sevenDaysAgo = new Date();
@@ -124,7 +124,7 @@ const Home: React.FC = () => {
 
   // Calculate average stats
   const avgStats = useMemo(() => {
-    if (vitals.length === 0) {
+    if (!vitals || !Array.isArray(vitals) || vitals.length === 0) {
       return { systolic: 0, diastolic: 0, heartRate: 0 };
     }
     // Use last 7 days for averages
@@ -137,6 +137,8 @@ const Home: React.FC = () => {
       typeof v.diastolic === 'number' &&
       typeof v.heart_rate === 'number'
     );
+
+    if (validVitals.length === 0) return { systolic: 0, diastolic: 0, heartRate: 0 };
 
     if (validVitals.length === 0) {
       return { systolic: 0, diastolic: 0, heartRate: 0 };
