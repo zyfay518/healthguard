@@ -94,7 +94,7 @@ const Home: React.FC = () => {
     if (!recordedToday) {
       new Notification('健康助手提醒', {
         body: '记录时刻到啦！如果您还没记录今天的血压或症状，请及时打卡哦。',
-        icon: '/logo192.png' // Use a relative or actual icon path if available
+        icon: '/icon-512.png'
       });
     }
   };
@@ -120,14 +120,32 @@ const Home: React.FC = () => {
     }
   };
 
-  const handleSaveReminder = (time: { hour: number; minute: number }) => {
+  const handleSaveReminder = async (time: { hour: number; minute: number }) => {
     localStorage.setItem('healthguard_reminder', JSON.stringify(time));
     setReminderTime(time);
-    // Trigger permission request immediately when setting up
-    if (Notification.permission === 'default') {
-      Notification.requestPermission();
+
+    // Request notification permission
+    if ('Notification' in window) {
+      if (Notification.permission === 'default') {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          alert(`提醒设置成功：${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}\n\n⚠️ 但通知权限被拒绝，无法发送推送消息。请在浏览器设置中允许通知。`);
+          return;
+        }
+      }
+
+      if (Notification.permission === 'granted') {
+        // Send a test notification to confirm it works
+        new Notification('健康助手', {
+          body: `提醒已设置！每天 ${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')} 将提醒您记录健康数据。`,
+          icon: '/icon-512.png'
+        });
+      } else {
+        alert(`提醒设置成功：${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}\n\n⚠️ 通知权限未授予，无法发送推送消息。`);
+      }
+    } else {
+      alert(`提醒设置成功：${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}\n\n⚠️ 此浏览器不支持通知功能。`);
     }
-    alert(`提醒设置成功：${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`);
   };
 
   // Get latest vital for display

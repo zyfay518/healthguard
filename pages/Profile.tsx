@@ -33,6 +33,26 @@ const Profile: React.FC = () => {
 
   const loadProfile = async () => {
     try {
+      // Check cache first for instant display
+      const cached = localStorage.getItem('healthguard_profile_cache');
+      if (cached) {
+        const { data, timestamp } = JSON.parse(cached);
+        const cacheAge = Date.now() - timestamp;
+        const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes for profile page
+        if (cacheAge < CACHE_DURATION && data) {
+          setProfile(data);
+          setFullName(data.full_name || '');
+          if (data.gender) setGender(data.gender);
+          if (data.age) setAge(data.age);
+          if (data.height) setHeight(data.height);
+          if (data.weight) setWeight(data.weight);
+          if (data.avatar_url) setAvatarUrl(data.avatar_url);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Fetch from API
       const data = await profileService.get();
       if (data) {
         setProfile(data);
@@ -42,6 +62,11 @@ const Profile: React.FC = () => {
         if (data.height) setHeight(data.height);
         if (data.weight) setWeight(data.weight);
         if (data.avatar_url) setAvatarUrl(data.avatar_url);
+        // Update cache
+        localStorage.setItem('healthguard_profile_cache', JSON.stringify({
+          data,
+          timestamp: Date.now()
+        }));
       }
     } catch (error) {
       console.error('Failed to load profile', error);
