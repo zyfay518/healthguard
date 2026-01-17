@@ -14,7 +14,7 @@ const Profile: React.FC = () => {
   const [weight, setWeight] = useState(61);
   const [fullName, setFullName] = useState('');
   const [isEditingName, setIsEditingName] = useState(false);
-  const [avatarUrl, setAvatarUrl] = useState('https://picsum.photos/id/64/150/150');
+  const [avatarUrl, setAvatarUrl] = useState('/default-avatar.png');
   const [isSaving, setIsSaving] = useState(false);
 
   // Editing states for chips

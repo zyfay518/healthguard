@@ -230,7 +230,7 @@ const Home: React.FC = () => {
           <div className="flex items-center gap-3" onClick={() => navigate('/profile')}>
             <div
               className="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10 border-2 border-primary/20 cursor-pointer"
-              style={{ backgroundImage: `url("${profile?.avatar_url || 'https://picsum.photos/id/64/100/100'}")` }}
+              style={{ backgroundImage: `url("${profile?.avatar_url || '/default-avatar.png'}")` }}
             >
             </div>
             <div>
