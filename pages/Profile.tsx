@@ -248,48 +248,48 @@ const Profile: React.FC = () => {
                     </div>
                   )}
                   {editingField === 'age' && (
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 w-full overflow-hidden">
                       <input
                         type="number"
                         autoFocus
-                        className="flex-1 bg-gray-50 dark:bg-white/5 rounded-xl p-2 text-center font-bold text-lg outline-none border-2 border-transparent focus:border-primary"
+                        className="flex-1 min-w-0 bg-gray-50 dark:bg-white/5 rounded-xl p-2 text-center font-bold text-lg outline-none border-2 border-transparent focus:border-primary"
                         value={age}
                         onChange={(e) => setAge(parseInt(e.target.value))}
                         onKeyDown={(e) => e.key === 'Enter' && handleSaveField({ age })}
                       />
-                      <button onClick={() => handleSaveField({ age })} className="bg-primary text-white p-2 rounded-xl shadow-lg shadow-primary/20">
+                      <button onClick={() => handleSaveField({ age })} className="flex-shrink-0 bg-primary text-white p-2 rounded-xl shadow-lg shadow-primary/20">
                         <span className="material-symbols-outlined">check</span>
                       </button>
                     </div>
                   )}
                   {editingField === 'height' && (
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 w-full overflow-hidden">
                       <input
                         type="number"
                         autoFocus
-                        className="flex-1 bg-gray-50 dark:bg-white/5 rounded-xl p-2 text-center font-bold text-lg outline-none border-2 border-transparent focus:border-primary"
+                        className="flex-1 min-w-0 bg-gray-50 dark:bg-white/5 rounded-xl p-2 text-center font-bold text-lg outline-none border-2 border-transparent focus:border-primary"
                         value={height}
                         onChange={(e) => setHeight(parseInt(e.target.value))}
                         onKeyDown={(e) => e.key === 'Enter' && handleSaveField({ height })}
                       />
-                      <span className="text-gray-400 font-bold">cm</span>
-                      <button onClick={() => handleSaveField({ height })} className="bg-primary text-white p-2 rounded-xl shadow-lg shadow-primary/20">
+                      <span className="flex-shrink-0 text-gray-400 font-bold">cm</span>
+                      <button onClick={() => handleSaveField({ height })} className="flex-shrink-0 bg-primary text-white p-2 rounded-xl shadow-lg shadow-primary/20">
                         <span className="material-symbols-outlined">check</span>
                       </button>
                     </div>
                   )}
                   {editingField === 'weight' && (
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 w-full overflow-hidden">
                       <input
                         type="number"
                         autoFocus
-                        className="flex-1 bg-gray-50 dark:bg-white/5 rounded-xl p-2 text-center font-bold text-lg outline-none border-2 border-transparent focus:border-primary"
+                        className="flex-1 min-w-0 bg-gray-50 dark:bg-white/5 rounded-xl p-2 text-center font-bold text-lg outline-none border-2 border-transparent focus:border-primary"
                         value={weight}
                         onChange={(e) => setWeight(parseInt(e.target.value))}
                         onKeyDown={(e) => e.key === 'Enter' && handleSaveField({ weight })}
                       />
-                      <span className="text-gray-400 font-bold">kg</span>
-                      <button onClick={() => handleSaveField({ weight })} className="bg-primary text-white p-2 rounded-xl shadow-lg shadow-primary/20">
+                      <span className="flex-shrink-0 text-gray-400 font-bold">kg</span>
+                      <button onClick={() => handleSaveField({ weight })} className="flex-shrink-0 bg-primary text-white p-2 rounded-xl shadow-lg shadow-primary/20">
                         <span className="material-symbols-outlined">check</span>
                       </button>
                     </div>
