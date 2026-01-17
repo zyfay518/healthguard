@@ -92,7 +92,7 @@ export default async function handler(req, res) {
         if (url.startsWith('/api/vitals')) {
             if (method === 'GET') {
                 const { data, error } = await supabase
-                    .from('vitals')
+                    .from('vital_records')
                     .select('*')
                     .eq('user_id', user.id)
                     .order('recorded_at', { ascending: false });
@@ -102,7 +102,7 @@ export default async function handler(req, res) {
             if (method === 'POST') {
                 const body = await parseBody(req);
                 const { data, error } = await supabase
-                    .from('vitals')
+                    .from('vital_records')
                     .insert([{ user_id: user.id, ...body }])
                     .select();
                 if (error) throw error;
@@ -111,7 +111,7 @@ export default async function handler(req, res) {
             if (method === 'DELETE') {
                 const body = await parseBody(req);
                 const { error } = await supabase
-                    .from('vitals')
+                    .from('vital_records')
                     .delete()
                     .in('id', body.ids || [])
                     .eq('user_id', user.id);
@@ -124,7 +124,7 @@ export default async function handler(req, res) {
         if (url.startsWith('/api/symptoms')) {
             if (method === 'GET') {
                 const { data, error } = await supabase
-                    .from('symptoms')
+                    .from('symptom_logs')
                     .select('*')
                     .eq('user_id', user.id)
                     .order('created_at', { ascending: false });
@@ -134,7 +134,7 @@ export default async function handler(req, res) {
             if (method === 'POST') {
                 const body = await parseBody(req);
                 const { data, error } = await supabase
-                    .from('symptoms')
+                    .from('symptom_logs')
                     .insert([{ user_id: user.id, symptoms: body.symptoms, note: body.note, created_at: body.created_at || new Date().toISOString() }])
                     .select();
                 if (error) throw error;
@@ -143,7 +143,7 @@ export default async function handler(req, res) {
             if (method === 'DELETE') {
                 const body = await parseBody(req);
                 const { error } = await supabase
-                    .from('symptoms')
+                    .from('symptom_logs')
                     .delete()
                     .in('id', body.ids || [])
                     .eq('user_id', user.id);
