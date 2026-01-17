@@ -153,21 +153,23 @@ export default async function handler(req, res) {
         }
 
         // === PROFILE ===
+        // NOTE: profiles table uses 'id' as primary key (directly references auth.users), not 'user_id'
         if (url.startsWith('/api/auth/profile')) {
             if (method === 'GET') {
                 const { data, error } = await supabase
                     .from('profiles')
                     .select('*')
-                    .eq('user_id', user.id)
+                    .eq('id', user.id)
                     .single();
                 if (error && error.code !== 'PGRST116') throw error;
                 return json(res, 200, data || {});
             }
             if (method === 'PUT') {
                 const body = await parseBody(req);
+                // For profiles, id = user.id (the auth user id)
                 const { data, error } = await supabase
                     .from('profiles')
-                    .upsert({ user_id: user.id, ...body }, { onConflict: 'user_id' })
+                    .upsert({ id: user.id, ...body }, { onConflict: 'id' })
                     .select();
                 if (error) throw error;
                 return json(res, 200, data[0]);
