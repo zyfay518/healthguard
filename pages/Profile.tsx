@@ -54,6 +54,8 @@ const Profile: React.FC = () => {
     setIsSaving(true);
     try {
       await profileService.update(fields);
+      // Clear Home page cache so it refreshes on next visit
+      localStorage.removeItem('healthguard_profile_cache');
       // Update local state without full reload if possible, or just reload
       await loadProfile();
       setIsEditingName(false);
@@ -78,15 +80,60 @@ const Profile: React.FC = () => {
     }
   };
 
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      // In a real app, this would be a Supabase Storage upload or a backend upload
-      // For this demo, we'll use a local object URL to show immediate feedback
-      const url = URL.createObjectURL(file);
-      setAvatarUrl(url);
-      // And we'll "save" it (though without backend support it might fail silently or error)
-      handleSaveField({ avatar_url: url });
+    if (!file) return;
+
+    // Check file size (limit to 500KB)
+    const MAX_SIZE = 500 * 1024; // 500KB
+    if (file.size > MAX_SIZE) {
+      alert('图片文件过大，请选择小于 500KB 的图片');
+      return;
+    }
+
+    // Check file type
+    if (!file.type.startsWith('image/')) {
+      alert('请选择有效的图片文件');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      // Import supabase client
+      const { supabase } = await import('../lib/supabase');
+
+      // Generate unique filename
+      const fileExt = file.name.split('.').pop();
+      const fileName = `avatar_${Date.now()}.${fileExt}`;
+
+      // Upload to Supabase Storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, file, { upsert: true });
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        throw new Error('上传失败: ' + uploadError.message);
+      }
+
+      // Get public URL
+      const { publicURL, error: urlError } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(fileName);
+
+      if (urlError || !publicURL) {
+        throw new Error('获取图片链接失败');
+      }
+
+      // Save to profile
+      setAvatarUrl(publicURL);
+      await handleSaveField({ avatar_url: publicURL });
+
+    } catch (error: any) {
+      console.error('Avatar upload failed:', error);
+      alert('头像上传失败：' + (error.message || '请检查网络'));
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -182,7 +229,7 @@ const Profile: React.FC = () => {
 
             {/* Quick Inline Editor for Chips */}
             {editingField && (
-              <div className="mt-4 w-full max-w-[280px] bg-white dark:bg-[#231530] rounded-2xl p-4 shadow-xl border border-primary/20 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="mt-4 w-full max-w-[min(280px,90vw)] mx-auto bg-white dark:bg-[#231530] rounded-2xl p-4 shadow-xl border border-primary/20 animate-in fade-in slide-in-from-top-2 duration-200 box-border">
                 <div className="flex flex-col gap-4">
                   {editingField === 'gender' && (
                     <div className="flex gap-2">

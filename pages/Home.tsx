@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import { useAuth } from '../context/AuthContext';
-import { vitalService, symptomService } from '../services/api';
+import { vitalService, symptomService, profileService } from '../services/api';
 import { VitalRecord, aggregateByDay, getTimeAgoString } from '../utils/dataAggregation';
 import ReminderModal from '../components/ReminderModal';
 
@@ -15,14 +15,48 @@ const Home: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [reminderTime, setReminderTime] = useState<{ hour: number; minute: number } | null>(null);
 
+  // Profile state for avatar and name
+  const [profile, setProfile] = useState<{ avatar_url?: string; full_name?: string } | null>(null);
+
   useEffect(() => {
     loadVitals();
     loadSymptoms();
+    loadProfile();
     const saved = localStorage.getItem('healthguard_reminder');
     if (saved) {
       setReminderTime(JSON.parse(saved));
     }
   }, []);
+
+  // Load profile with caching (5 minutes)
+  const loadProfile = async () => {
+    try {
+      // Check cache first
+      const cached = localStorage.getItem('healthguard_profile_cache');
+      if (cached) {
+        const { data, timestamp } = JSON.parse(cached);
+        const cacheAge = Date.now() - timestamp;
+        const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+        if (cacheAge < CACHE_DURATION && data) {
+          setProfile(data);
+          return;
+        }
+      }
+
+      // Fetch from API
+      const data = await profileService.get();
+      if (data) {
+        setProfile(data);
+        // Save to cache
+        localStorage.setItem('healthguard_profile_cache', JSON.stringify({
+          data,
+          timestamp: Date.now()
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to load profile', error);
+    }
+  };
 
   // Notification logic
   useEffect(() => {
@@ -178,12 +212,12 @@ const Home: React.FC = () => {
           <div className="flex items-center gap-3" onClick={() => navigate('/profile')}>
             <div
               className="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10 border-2 border-primary/20 cursor-pointer"
-              style={{ backgroundImage: 'url("https://picsum.photos/id/64/100/100")' }}
+              style={{ backgroundImage: `url("${profile?.avatar_url || 'https://picsum.photos/id/64/100/100'}")` }}
             >
             </div>
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">欢迎回来，</p>
-              <p className="text-[#140c1d] dark:text-white text-lg font-bold leading-tight">{user?.email?.split('@')[0] || '用户'}</p>
+              <p className="text-[#140c1d] dark:text-white text-lg font-bold leading-tight">{profile?.full_name || user?.email?.split('@')[0] || '用户'}</p>
             </div>
           </div>
           <button
