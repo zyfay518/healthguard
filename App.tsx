@@ -46,34 +46,30 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     if (session) {
       checkInactivity();
+      // Update last active timestamp on every meaningful route change
+      localStorage.setItem('healthguard_last_active', Date.now().toString());
     }
   }, [session, location.pathname]);
 
   const checkInactivity = async () => {
     try {
-      if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') return; // Optional: verify in actual prod only
+      // Use import.meta.env.PROD for Vite/Vercel production check
+      if (!import.meta.env.PROD) return;
 
-      const [vitals, symptoms] = await Promise.all([
-        vitalService.getAll().catch(() => []),  // Fallback to empty array on fail
-        symptomService.getAll().catch(() => [])
-      ]);
+      const lastActive = localStorage.getItem('healthguard_last_active');
+      if (!lastActive) {
+        localStorage.setItem('healthguard_last_active', Date.now().toString());
+        return;
+      }
 
-      const latestDates = [
-        ...vitals.map((v: any) => new Date(v.recorded_at).getTime()),
-        ...symptoms.map((s: any) => new Date(s.created_at || s.recorded_at).getTime())
-      ].filter(t => !isNaN(t));
-
-      if (latestDates.length === 0) return;
-
-      const latestTime = Math.max(...latestDates);
-      const diffDays = (Date.now() - latestTime) / (1000 * 60 * 60 * 24);
+      const diffDays = (Date.now() - parseInt(lastActive)) / (1000 * 60 * 60 * 24);
 
       if (diffDays >= 7) {
-        alert('由于您已连续 7 天未记录任何健康数据，为了安全起见，请重新登录。');
+        alert('由于您已超过 7 天未登录使用，为了安全起见，请重新登录。');
         await signOut();
       }
     } catch (error) {
-      console.warn('Inactivity check failed (ignoring):', error);
+      console.warn('Inactivity check failed:', error);
     }
   };
 
