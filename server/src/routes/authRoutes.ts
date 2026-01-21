@@ -13,6 +13,7 @@ const profileSchema = z.object({
     height: z.number().optional(),
     weight: z.number().optional(),
     avatar_url: z.string().optional(),
+    last_device_id: z.string().optional(),
 });
 
 // Get current user profile

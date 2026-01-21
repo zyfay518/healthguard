@@ -12,15 +12,17 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [session, setSession] = useState<Session | null>(null);
-    const [user, setUser] = useState<User | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [session, setSession] = useState<Session | null>(() => supabase.auth.session());
+    const [user, setUser] = useState<User | null>(() => supabase.auth.session()?.user ?? null);
+    const [loading, setLoading] = useState(false); // No longer needs to start as true since we check sync
 
     useEffect(() => {
-        const session = supabase.auth.session();
-        setSession(session);
-        setUser(session?.user ?? null);
-        setLoading(false);
+        // Just in case session() was empty but recovered later
+        const currentSession = supabase.auth.session();
+        if (currentSession && !session) {
+            setSession(currentSession);
+            setUser(currentSession.user);
+        }
 
         const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
             setSession(session);

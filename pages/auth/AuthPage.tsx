@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 
 const AuthPage: React.FC = () => {
     const [loading, setLoading] = useState(false);
@@ -10,6 +11,14 @@ const AuthPage: React.FC = () => {
     const [fullName, setFullName] = useState('');
     const [error, setError] = useState<string | null>(null);
     const navigate = useNavigate();
+    const { session } = useAuth();
+
+    // Auto-redirect if already logged in
+    useEffect(() => {
+        if (session) {
+            navigate('/', { replace: true });
+        }
+    }, [session, navigate]);
 
     const handleAuth = async (e: React.FormEvent) => {
         e.preventDefault();

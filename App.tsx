@@ -1,7 +1,8 @@
 import React, { useEffect, Suspense, lazy } from 'react';
 import { HashRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { vitalService, symptomService } from './services/api';
+import { vitalService, symptomService, profileService } from './services/api';
+import { getDeviceId } from './utils/device';
 
 // Lazy load pages for better initial load performance
 const Home = lazy(() => import('./pages/Home'));
@@ -41,6 +42,16 @@ const AppContent: React.FC = () => {
   // Hide bottom nav on specific full-screen interaction pages or if not logged in
   const hideNavRoutes = ['/record', '/symptoms', '/date-select', '/bmi-info', '/auth'];
   const showNav = session && !hideNavRoutes.includes(location.pathname);
+
+  // Register device on login/app mount
+  useEffect(() => {
+    if (session) {
+      const deviceId = getDeviceId();
+      profileService.update({ last_device_id: deviceId }).catch(err => {
+        console.warn('Failed to register device ID:', err);
+      });
+    }
+  }, [session]);
 
   // Inactivity check logic (7 days)
   useEffect(() => {
