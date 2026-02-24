@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, ReferenceLine } from 'recharts';
+import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine } from 'recharts';
 import { vitalService, profileService } from '../services/api';
 import {
   VitalRecord,
@@ -316,6 +316,13 @@ const Trends: React.FC = () => {
                       </linearGradient>
                     </defs>
                     <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                    <YAxis
+                      hide
+                      domain={[
+                        (dataMin: number) => Math.min(dataMin, 50),
+                        (dataMax: number) => Math.max(dataMax, getBPThresholds(profile?.age, profile?.gender).systolic + 10)
+                      ]}
+                    />
                     <Tooltip
                       contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                       cursor={{ stroke: '#7b00ff', strokeWidth: 1, strokeDasharray: '5 5' }}
@@ -369,6 +376,13 @@ const Trends: React.FC = () => {
                       </linearGradient>
                     </defs>
                     <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                    <YAxis
+                      hide
+                      domain={[
+                        (dataMin: number) => Math.min(dataMin, getHRThresholds(profile?.age, profile?.gender).min - 10),
+                        (dataMax: number) => Math.max(dataMax, getHRThresholds(profile?.age, profile?.gender).max + 10)
+                      ]}
+                    />
                     <Tooltip
                       contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                       cursor={{ stroke: '#3b82f6', strokeWidth: 1, strokeDasharray: '5 5' }}
