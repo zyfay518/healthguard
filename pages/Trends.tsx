@@ -329,8 +329,8 @@ const Trends: React.FC = () => {
                     />
                     <Area isAnimationActive={!loading} name="收缩压" type="monotone" dataKey="systolic" stroke="#7b00ff" fill="url(#gradSys)" strokeWidth={2.5} dot={{ r: 3, fill: 'white', stroke: '#7b00ff', strokeWidth: 2 }} />
                     <Area isAnimationActive={!loading} name="舒张压" type="monotone" dataKey="diastolic" stroke="#38bdf8" fill="url(#gradDia)" strokeWidth={2.5} dot={{ r: 3, fill: 'white', stroke: '#38bdf8', strokeWidth: 2 }} />
-                    <ReferenceLine y={getBPThresholds(profile?.age, profile?.gender).systolic} stroke="#ef4444" strokeDasharray="3 3" label={{ position: 'top', value: '偏高/高收缩压警戒', fill: '#ef4444', fontSize: 10 }} />
-                    <ReferenceLine y={getBPThresholds(profile?.age, profile?.gender).diastolic} stroke="#f97316" strokeDasharray="3 3" label={{ position: 'insideBottomLeft', value: '偏高/高舒张压警戒', fill: '#f97316', fontSize: 10 }} />
+                    <ReferenceLine y={getBPThresholds(profile?.age, profile?.gender).systolic} stroke="#ef4444" strokeDasharray="3 3" />
+                    <ReferenceLine y={getBPThresholds(profile?.age, profile?.gender).diastolic} stroke="#f97316" strokeDasharray="3 3" />
                   </AreaChart>
                 </ResponsiveContainer>
               )}
@@ -388,8 +388,8 @@ const Trends: React.FC = () => {
                       cursor={{ stroke: '#3b82f6', strokeWidth: 1, strokeDasharray: '5 5' }}
                     />
                     <Area isAnimationActive={!loading} name="心率" type="monotone" dataKey="heart_rate" stroke="#3b82f6" fill="url(#gradHr)" strokeWidth={2.5} dot={{ r: 3, fill: 'white', stroke: '#3b82f6', strokeWidth: 2 }} />
-                    <ReferenceLine y={getHRThresholds(profile?.age, profile?.gender).max} stroke="#ef4444" strokeDasharray="3 3" label={{ position: 'top', value: '心率过快', fill: '#ef4444', fontSize: 10 }} />
-                    <ReferenceLine y={getHRThresholds(profile?.age, profile?.gender).min} stroke="#eab308" strokeDasharray="3 3" label={{ position: 'insideBottomLeft', value: '心率过缓', fill: '#eab308', fontSize: 10 }} />
+                    <ReferenceLine y={getHRThresholds(profile?.age, profile?.gender).max} stroke="#ef4444" strokeDasharray="3 3" />
+                    <ReferenceLine y={getHRThresholds(profile?.age, profile?.gender).min} stroke="#eab308" strokeDasharray="3 3" />
                   </AreaChart>
                 </ResponsiveContainer>
               )}

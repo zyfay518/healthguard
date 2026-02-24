@@ -388,7 +388,6 @@ const Home: React.FC = () => {
                     y={getBPThresholds(profile?.age, profile?.gender).systolic}
                     stroke="#ef4444"
                     strokeDasharray="3 3"
-                    label={{ position: 'top', value: '收缩压警戒线', fill: '#ef4444', fontSize: 10 }}
                   />
                 </AreaChart>
               </ResponsiveContainer>
