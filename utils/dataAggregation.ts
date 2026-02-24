@@ -247,3 +247,51 @@ export function evaluateBP(systolic: number, diastolic: number, age: number = 30
         default: return { text: '正常', color: 'green', advice: '' };
     }
 }
+
+// Get dynamic BP thresholds based on age and gender
+export function getBPThresholds(age: number = 30, gender: string = 'unknown'): { systolic: number; diastolic: number } {
+    let systolic = 120;
+    let diastolic = 80;
+
+    // Base adjustments by age
+    if (age >= 65) {
+        systolic = 140;
+        diastolic = 90;
+    } else if (age >= 45) {
+        systolic = 130;
+        diastolic = 85;
+    } else {
+        systolic = 120;
+        diastolic = 80;
+    }
+
+    // Gender specific minor tweaks (e.g. younger females often have slightly lower baseline BP)
+    if (gender === 'female' && age < 50) {
+        systolic -= 5;
+        diastolic -= 5;
+    }
+
+    return { systolic, diastolic };
+}
+
+// Get dynamic HR thresholds based on age and gender
+export function getHRThresholds(age: number = 30, gender: string = 'unknown'): { max: number; min: number } {
+    let max = 100;
+    let min = 60;
+
+    // Resting HR tends to decrease slightly with age
+    if (age >= 60) {
+        max = 90;
+        min = 55;
+    } else if (age <= 18) {
+        max = 105;
+        min = 65;
+    }
+
+    // Females sometimes have slightly higher resting HR than males
+    if (gender === 'female') {
+        max += 5;
+    }
+
+    return { max, min };
+}

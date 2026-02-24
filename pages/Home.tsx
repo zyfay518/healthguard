@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, ReferenceLine } from 'recharts';
 import { useAuth } from '../context/AuthContext';
 import { vitalService, symptomService, profileService } from '../services/api';
-import { VitalRecord, aggregateByDay, getTimeAgoString, getLastNRecords, evaluateBP } from '../utils/dataAggregation';
+import { VitalRecord, aggregateByDay, getTimeAgoString, getLastNRecords, evaluateBP, getBPThresholds } from '../utils/dataAggregation';
 import ReminderModal from '../components/ReminderModal';
 
 const Home: React.FC = () => {
@@ -376,12 +376,12 @@ const Home: React.FC = () => {
                     dot={{ fill: '#fff', stroke: '#7b00ff', strokeWidth: 2, r: 3 }}
                     activeDot={{ r: 5, fill: '#7b00ff', stroke: '#fff', strokeWidth: 2 }}
                   />
-                  {/* Dynamic Threshold Line: age 65+ gets 150, others get 140 */}
+                  {/* Dynamic Threshold Line */}
                   <ReferenceLine
-                    y={profile?.age && profile.age >= 65 ? 150 : 140}
+                    y={getBPThresholds(profile?.age, profile?.gender).systolic}
                     stroke="#ef4444"
                     strokeDasharray="3 3"
-                    label={{ position: 'top', value: '警戒线', fill: '#ef4444', fontSize: 10 }}
+                    label={{ position: 'top', value: '收缩压警戒线', fill: '#ef4444', fontSize: 10 }}
                   />
                 </AreaChart>
               </ResponsiveContainer>
