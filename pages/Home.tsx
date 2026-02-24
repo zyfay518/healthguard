@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
+import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, ReferenceLine } from 'recharts';
 import { useAuth } from '../context/AuthContext';
 import { vitalService, symptomService, profileService } from '../services/api';
-import { VitalRecord, aggregateByDay, getTimeAgoString } from '../utils/dataAggregation';
+import { VitalRecord, aggregateByDay, getTimeAgoString, getLastNRecords, evaluateBP } from '../utils/dataAggregation';
 import ReminderModal from '../components/ReminderModal';
 
 const Home: React.FC = () => {
@@ -174,33 +174,22 @@ const Home: React.FC = () => {
     }));
   }, [vitals]);
 
-  // Calculate average stats
+  // Calculate average stats based on last 3 records
   const avgStats = useMemo(() => {
     if (!vitals || !Array.isArray(vitals) || vitals.length === 0) {
       return { systolic: 0, diastolic: 0, heartRate: 0 };
     }
-    // Use last 7 days for averages
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-    const recentVitals = vitals.filter(v => new Date(v.recorded_at) >= sevenDaysAgo);
 
-    const validVitals = recentVitals.filter(v =>
-      typeof v.systolic === 'number' &&
-      typeof v.diastolic === 'number' &&
-      typeof v.heart_rate === 'number'
-    );
+    // Grab the latest 3 valid records matching user requirement
+    const recentVitals = getLastNRecords(vitals, 3);
 
-    if (validVitals.length === 0) return { systolic: 0, diastolic: 0, heartRate: 0 };
+    if (recentVitals.length === 0) return { systolic: 0, diastolic: 0, heartRate: 0 };
 
-    if (validVitals.length === 0) {
-      return { systolic: 0, diastolic: 0, heartRate: 0 };
-    }
-
-    const count = validVitals.length;
+    const count = recentVitals.length;
     return {
-      systolic: Math.round(validVitals.reduce((sum, v) => sum + v.systolic, 0) / count),
-      diastolic: Math.round(validVitals.reduce((sum, v) => sum + v.diastolic, 0) / count),
-      heartRate: Math.round(validVitals.reduce((sum, v) => sum + v.heart_rate, 0) / count)
+      systolic: Math.round(recentVitals.reduce((sum, v) => sum + v.systolic, 0) / count),
+      diastolic: Math.round(recentVitals.reduce((sum, v) => sum + v.diastolic, 0) / count),
+      heartRate: Math.round(recentVitals.reduce((sum, v) => sum + v.heart_rate, 0) / count)
     };
   }, [vitals]);
 
@@ -211,16 +200,21 @@ const Home: React.FC = () => {
   }, [latestVital]);
 
   // Determine BP status
-  const getBpStatus = (systolic: number, diastolic: number) => {
-    if (systolic < 90 || diastolic < 60) return { text: '偏低', color: 'yellow' };
-    if (systolic <= 120 && diastolic <= 80) return { text: '正常', color: 'green' };
-    if (systolic <= 139 || diastolic <= 89) return { text: '偏高', color: 'yellow' };
-    return { text: '高血压', color: 'red' };
-  };
+  const bpStatus = useMemo(() => {
+    if (vitals.length === 0 || !avgStats.systolic) {
+      return { text: '暂无', color: 'gray', advice: '' };
+    }
 
-  const bpStatus = latestVital
-    ? getBpStatus(latestVital.systolic, latestVital.diastolic)
-    : { text: '正常', color: 'green' };
+    // Extract profile stats
+    const age = profile?.age || 30;
+    const gender = profile?.gender || 'unknown';
+    const height = profile?.height || 170;
+    const weight = profile?.weight || 65;
+    const bmi = weight / ((height / 100) * (height / 100)) || 22;
+
+    // Based on latest 3 records average
+    return evaluateBP(avgStats.systolic, avgStats.diastolic, age, gender, bmi);
+  }, [vitals, avgStats, profile]);
 
   return (
     <div className="flex flex-col gap-0 pb-6 relative">
@@ -271,18 +265,20 @@ const Home: React.FC = () => {
             <div>
               <div className="flex items-baseline gap-1">
                 <p className="text-[#140c1d] dark:text-white text-2xl font-bold leading-tight">
-                  {latestVital?.systolic || avgStats.systolic || '--'}
+                  {vitals.length > 0 ? avgStats.systolic : '--'}
                 </p>
                 <span className="text-gray-400 text-lg">/</span>
                 <p className="text-[#140c1d] dark:text-white text-2xl font-bold leading-tight">
-                  {latestVital?.diastolic || avgStats.diastolic || '--'}
+                  {vitals.length > 0 ? avgStats.diastolic : '--'}
                 </p>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">mmHg</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">mmHg <span className="text-[10px] text-gray-400">(近3次平均)</span></p>
             </div>
             <div className="flex items-center gap-1 mt-auto">
-              <span className={`material-symbols-outlined text-${bpStatus.color}-500 text-[16px]`}>check_circle</span>
-              <p className={`text-${bpStatus.color}-600 dark:text-${bpStatus.color}-400 text-sm font-medium`}>{bpStatus.text}</p>
+              {vitals.length > 0 && <span className={`material-symbols-outlined text-${bpStatus.color}-500 text-[16px]`}>
+                {bpStatus.color === 'green' || bpStatus.color === 'blue' ? 'check_circle' : 'warning'}
+              </span>}
+              <p className={`text-${bpStatus.color}-600 dark:text-${bpStatus.color}-400 text-xs font-semibold whitespace-nowrap overflow-hidden text-ellipsis`} title={bpStatus.advice}>{bpStatus.text}</p>
             </div>
           </div>
 
@@ -379,6 +375,13 @@ const Home: React.FC = () => {
                     fill="url(#gradient)"
                     dot={{ fill: '#fff', stroke: '#7b00ff', strokeWidth: 2, r: 3 }}
                     activeDot={{ r: 5, fill: '#7b00ff', stroke: '#fff', strokeWidth: 2 }}
+                  />
+                  {/* Dynamic Threshold Line: age 65+ gets 150, others get 140 */}
+                  <ReferenceLine
+                    y={profile?.age && profile.age >= 65 ? 150 : 140}
+                    stroke="#ef4444"
+                    strokeDasharray="3 3"
+                    label={{ position: 'top', value: '警戒线', fill: '#ef4444', fontSize: 10 }}
                   />
                 </AreaChart>
               </ResponsiveContainer>

@@ -88,9 +88,9 @@ const Trends: React.FC = () => {
           return aggregateByDay(vitals);
         }
       case 'week':
-        return aggregateByWeek(vitals);
       case 'month':
-        return aggregateByMonth(vitals);
+        // Show daily averages across the selected 14 or 30 day range
+        return aggregateByDay(vitals);
       case 'record':
         return formatRecordsForDisplay(vitals);
       default:
@@ -155,6 +155,21 @@ const Trends: React.FC = () => {
     setDateRange({ start: newStart, end: newEnd });
   };
 
+  const handleTabChange = (tab: 'day' | 'week' | 'month' | 'record') => {
+    setActiveTab(tab);
+    if (tab === 'week') {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 13);
+      setDateRange({ start, end });
+    } else if (tab === 'month') {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 29);
+      setDateRange({ start, end });
+    }
+  };
+
   const toggleSelect = (id: string) => {
     setSelectedIds(prev =>
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
@@ -204,10 +219,10 @@ const Trends: React.FC = () => {
               className="absolute top-1 bottom-1 w-[24%] bg-white dark:bg-[#7b00ff] rounded-lg shadow-sm border border-gray-200/50 dark:border-none transition-all duration-300 ease-out"
               style={{ left: activeTab === 'day' ? '1%' : activeTab === 'week' ? '26%' : activeTab === 'month' ? '51%' : '75%' }}
             ></div>
-            <button onClick={() => setActiveTab('day')} className={`relative flex-1 py-1.5 text-sm font-medium z-10 transition-colors ${activeTab === 'day' ? 'text-primary dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>日</button>
-            <button onClick={() => setActiveTab('week')} className={`relative flex-1 py-1.5 text-sm font-medium z-10 transition-colors ${activeTab === 'week' ? 'text-primary dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>周</button>
-            <button onClick={() => setActiveTab('month')} className={`relative flex-1 py-1.5 text-sm font-medium z-10 transition-colors ${activeTab === 'month' ? 'text-primary dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>月</button>
-            <button onClick={() => setActiveTab('record')} className={`relative flex-1 py-1.5 text-sm font-medium z-10 transition-colors ${activeTab === 'record' ? 'text-primary dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>记录</button>
+            <button onClick={() => handleTabChange('day')} className={`relative flex-1 py-1.5 text-sm font-medium z-10 transition-colors ${activeTab === 'day' ? 'text-primary dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>日</button>
+            <button onClick={() => handleTabChange('week')} className={`relative flex-1 py-1.5 text-sm font-medium z-10 transition-colors ${activeTab === 'week' ? 'text-primary dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>周</button>
+            <button onClick={() => handleTabChange('month')} className={`relative flex-1 py-1.5 text-sm font-medium z-10 transition-colors ${activeTab === 'month' ? 'text-primary dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>月</button>
+            <button onClick={() => handleTabChange('record')} className={`relative flex-1 py-1.5 text-sm font-medium z-10 transition-colors ${activeTab === 'record' ? 'text-primary dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>记录</button>
           </div>
 
           <div className="flex items-center justify-between px-2 pt-1">
