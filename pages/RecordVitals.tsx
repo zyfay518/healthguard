@@ -1,16 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { vitalService } from '../services/api';
+import { glucoseService, vitalService } from '../services/api';
+import type { GlucoseContext, PostMealTiming } from '../utils/dataAggregation';
 
 const RecordVitals: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [systolic, setSystolic] = useState('--');
   const [diastolic, setDiastolic] = useState('--');
-  const [activeField, setActiveField] = useState<'sys' | 'dia' | 'hr'>('sys');
+  const [activeField, setActiveField] = useState<'sys' | 'dia' | 'hr' | 'glucose'>('sys');
   const [heartRate, setHeartRate] = useState('--');
+  const [glucose, setGlucose] = useState('--');
+  const [glucoseContext, setGlucoseContext] = useState<GlucoseContext | null>(null);
+  const [postMealTiming, setPostMealTiming] = useState<PostMealTiming | null>(null);
   const [showValidationModal, setShowValidationModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  const contextOptions: { value: GlucoseContext; label: string }[] = [
+    { value: 'fasting', label: '空腹' },
+    { value: 'pre_meal', label: '餐前' },
+    { value: 'post_meal', label: '餐后' },
+  ];
+
+  const postMealOptions: { value: PostMealTiming; label: string }[] = [
+    { value: 'within_30_min', label: '30分钟内' },
+    { value: 'one_hour', label: '1小时' },
+    { value: 'two_hours', label: '2小时' },
+    { value: 'over_two_hours', label: '2小时以上' },
+  ];
+
+  const stepInfo = activeField === 'glucose'
+    ? { index: 2, total: 3, title: '血糖', skipLabel: '跳过血糖' }
+    : activeField === 'hr'
+      ? { index: 3, total: 3, title: '心率', skipLabel: '跳过心率' }
+      : { index: 1, total: 3, title: '血压', skipLabel: '跳过血压' };
 
   // Parse date/time from URL params (synced with Symptoms page)
   const getInitialDateTime = () => {
@@ -51,7 +74,8 @@ const RecordVitals: React.FC = () => {
 
     if (activeField === 'sys') { currentVal = systolic; setVal = setSystolic; }
     else if (activeField === 'dia') { currentVal = diastolic; setVal = setDiastolic; }
-    else { currentVal = heartRate; setVal = setHeartRate; }
+    else if (activeField === 'hr') { currentVal = heartRate; setVal = setHeartRate; }
+    else { currentVal = glucose; setVal = setGlucose; }
 
     if (currentVal === '--') currentVal = '';
 
@@ -61,45 +85,51 @@ const RecordVitals: React.FC = () => {
     } else if (key === '.') {
       if (!currentVal.includes('.')) setVal(currentVal + '.');
     } else {
-      if (currentVal.length < 3) setVal(currentVal + key);
+      const maxLength = activeField === 'glucose' ? 4 : 3;
+      if (currentVal.length < maxLength) setVal(currentVal + key);
     }
   };
 
-  const validateData = (): boolean => {
-    const hasValidSystolic = systolic !== '--' && !isNaN(parseInt(systolic));
-    const hasValidDiastolic = diastolic !== '--' && !isNaN(parseInt(diastolic));
-    const hasValidHeartRate = heartRate !== '--' && !isNaN(parseInt(heartRate));
+  const hasNumber = (value: string) => value !== '--' && !isNaN(Number(value));
+  const hasInt = (value: string) => value !== '--' && !isNaN(parseInt(value));
 
-    return hasValidSystolic && hasValidDiastolic && hasValidHeartRate;
+  const validateData = (): boolean => {
+    const hasValidSystolic = hasInt(systolic);
+    const hasValidDiastolic = hasInt(diastolic);
+    const hasValidHeartRate = hasInt(heartRate);
+    const hasValidGlucose = hasNumber(glucose);
+    const hasPartialBloodPressure = hasValidSystolic !== hasValidDiastolic;
+    const hasAnyRecord = (hasValidSystolic && hasValidDiastolic) || hasValidHeartRate || hasValidGlucose;
+
+    return hasAnyRecord && !hasPartialBloodPressure;
   };
 
   const saveData = async () => {
     if (isSaving) return;
     setIsSaving(true);
     try {
-      // Build the record with optional fields
-      const record: any = {
-        recorded_at: recordTime.toISOString()
-      };
+      const recordedAt = recordTime.toISOString();
+      const hasBloodPressure = hasInt(systolic) && hasInt(diastolic);
+      const hasHeartRate = hasInt(heartRate);
+      const hasGlucose = hasNumber(glucose);
 
-      if (systolic !== '--' && !isNaN(parseInt(systolic))) {
-        record.systolic = parseInt(systolic);
-      }
-      if (diastolic !== '--' && !isNaN(parseInt(diastolic))) {
-        record.diastolic = parseInt(diastolic);
-      }
-      if (heartRate !== '--' && !isNaN(parseInt(heartRate))) {
-        record.heart_rate = parseInt(heartRate);
+      if (hasBloodPressure || hasHeartRate) {
+        await vitalService.create({
+          recorded_at: recordedAt,
+          systolic: hasBloodPressure ? parseInt(systolic) : null,
+          diastolic: hasBloodPressure ? parseInt(diastolic) : null,
+          heart_rate: hasHeartRate ? parseInt(heartRate) : null,
+        });
       }
 
-      // Only save if we have at least one valid value
-      if (Object.keys(record).length > 1) { // > 1 because recorded_at is always there
-        // Set default values for missing fields
-        if (!record.systolic) record.systolic = 0;
-        if (!record.diastolic) record.diastolic = 0;
-        if (!record.heart_rate) record.heart_rate = 0;
-
-        await vitalService.create(record);
+      if (hasGlucose) {
+        await glucoseService.create({
+          value: Number(Number(glucose).toFixed(1)),
+          unit: 'mmol/L',
+          measurement_context: glucoseContext || 'random',
+          post_meal_timing: glucoseContext === 'post_meal' ? postMealTiming : null,
+          recorded_at: recordedAt,
+        });
       }
 
       navigate('/');
@@ -113,14 +143,36 @@ const RecordVitals: React.FC = () => {
 
   const nextField = async () => {
     if (activeField === 'sys') setActiveField('dia');
-    else if (activeField === 'dia') setActiveField('hr');
+    else if (activeField === 'dia') setActiveField('glucose');
+    else if (activeField === 'glucose') setActiveField('hr');
     else {
-      // Try to save - check validation first
       if (!validateData()) {
         setShowValidationModal(true);
       } else {
         await saveData();
       }
+    }
+  };
+
+  const skipField = () => {
+    if (activeField === 'sys' || activeField === 'dia') {
+      setSystolic('--');
+      setDiastolic('--');
+      setActiveField('glucose');
+    } else if (activeField === 'glucose') {
+      setGlucose('--');
+      setGlucoseContext(null);
+      setPostMealTiming(null);
+      setActiveField('hr');
+    } else {
+      setHeartRate('--');
+    }
+  };
+
+  const selectGlucoseContext = (value: GlucoseContext) => {
+    setGlucoseContext(value);
+    if (value !== 'post_meal') {
+      setPostMealTiming(null);
     }
   };
 
@@ -157,7 +209,7 @@ const RecordVitals: React.FC = () => {
 
       <main className="flex-1 flex flex-col px-6 pt-2 pb-6 gap-8 overflow-y-auto no-scrollbar relative z-10">
         {/* Time display with edit button */}
-        <div className="flex justify-center">
+        <div className="flex flex-col items-center gap-3">
           <button
             onClick={handleEditTime}
             className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white dark:bg-[#2a1d36] border border-gray-100 dark:border-white/5 shadow-sm active:scale-95 transition-transform"
@@ -165,9 +217,20 @@ const RecordVitals: React.FC = () => {
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">{dateText}, {timeText}</span>
             <span className="material-symbols-outlined text-[14px] text-gray-400">edit</span>
           </button>
+          <div className="flex flex-col items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              {[1, 2, 3].map(step => (
+                <span
+                  key={step}
+                  className={`h-1.5 rounded-full transition-all ${step === stepInfo.index ? 'w-6 bg-primary' : step < stepInfo.index ? 'w-3 bg-primary/40' : 'w-3 bg-gray-200 dark:bg-white/10'}`}
+                />
+              ))}
+            </div>
+            <p className="text-xs font-semibold text-gray-400">第 {stepInfo.index}/{stepInfo.total} 项 · {stepInfo.title}</p>
+          </div>
         </div>
 
-        <div className="flex flex-col gap-5">
+        {(activeField === 'sys' || activeField === 'dia') && <div className="flex flex-col gap-5">
           <div className="flex items-center gap-2">
             <div className="size-6 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500">
               <span className="material-symbols-outlined text-[14px]">favorite</span>
@@ -199,9 +262,9 @@ const RecordVitals: React.FC = () => {
               <span className={`absolute -bottom-7 left-1/2 -translate-x-1/2 text-xs font-semibold ${activeField === 'dia' ? 'text-primary' : 'text-gray-400'} uppercase tracking-wide`}>舒张压</span>
             </div>
           </div>
-        </div>
+        </div>}
 
-        <div className="flex flex-col gap-5 pt-4">
+        {activeField === 'hr' && <div className="flex flex-col gap-5 pt-4">
           <div className="flex items-center gap-2">
             <div className="size-6 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-500">
               <span className="material-symbols-outlined text-[14px]">monitor_heart</span>
@@ -224,24 +287,81 @@ const RecordVitals: React.FC = () => {
               </p>
             </div>
           </div>
-        </div>
+        </div>}
+
+        {activeField === 'glucose' && <div className="flex flex-col gap-5 pt-2">
+          <div className="flex items-center gap-2">
+            <div className="size-6 rounded-full bg-green-50 dark:bg-green-900/20 flex items-center justify-center text-green-500">
+              <span className="material-symbols-outlined text-[14px]">bloodtype</span>
+            </div>
+            <label className="text-sm font-bold text-gray-700 dark:text-gray-300">血糖 <span className="text-xs font-normal text-gray-400 ml-1">mmol/L</span></label>
+          </div>
+          <div className="flex items-center gap-4">
+            <div
+              onClick={() => setActiveField('glucose')}
+              className="w-1/2 relative cursor-pointer"
+            >
+              <div className={`h-24 w-full bg-white dark:bg-[#231530] rounded-2xl border-2 ${activeField === 'glucose' ? 'border-primary shadow-glow' : 'border-gray-200 dark:border-white/10'} flex items-center justify-center transition-all`}>
+                <span className={`text-[40px] font-bold ${glucose === '--' ? 'text-gray-300' : 'text-[#140c1d] dark:text-white'} leading-none tracking-tight`}>{glucose}</span>
+                {activeField === 'glucose' && <div className="absolute right-[18%] top-1/2 -translate-y-1/2 h-8 w-0.5 bg-primary animate-pulse"></div>}
+              </div>
+            </div>
+            <div className="flex-1 flex flex-col gap-2">
+              <div className="grid grid-cols-3 gap-1.5">
+                {contextOptions.map(option => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => selectGlucoseContext(option.value)}
+                    className={`h-8 rounded-lg text-xs font-semibold transition-colors ${glucoseContext === option.value ? 'bg-green-500 text-white' : 'bg-white dark:bg-[#231530] text-gray-500 dark:text-gray-300 border border-gray-100 dark:border-white/10'}`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {glucoseContext === 'post_meal' && (
+                <div className="grid grid-cols-2 gap-1.5">
+                  {postMealOptions.map(option => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setPostMealTiming(option.value)}
+                      className={`h-8 rounded-lg text-[11px] font-semibold transition-colors ${postMealTiming === option.value ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700' : 'bg-white dark:bg-[#231530] text-gray-500 dark:text-gray-300 border border-gray-100 dark:border-white/10'}`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>}
       </main>
 
       {/* Keypad */}
       <div className="bg-white dark:bg-[#1f122b] rounded-t-[2rem] shadow-[0_-8px_30px_rgba(0,0,0,0.08)] z-30 relative border-t border-gray-50 dark:border-[#352345]">
         <div className="px-6 -mt-7 mb-2">
-          <button
-            onClick={nextField}
-            disabled={isSaving}
-            className={`w-full bg-primary hover:bg-primary/90 text-white font-bold text-lg h-14 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-primary/30 active:scale-[0.98] transition-all ${isSaving ? 'opacity-70 cursor-not-allowed' : ''}`}
-          >
-            {isSaving ? (
-              <span className="material-symbols-outlined animate-spin">sync</span>
-            ) : (
-              <span className="material-symbols-outlined text-[20px]">{activeField === 'hr' ? 'check' : 'arrow_forward'}</span>
-            )}
-            {isSaving ? '保存中...' : (activeField === 'hr' ? '保存' : '下一步')}
-          </button>
+          <div className="grid grid-cols-[1fr_2fr] gap-3">
+            <button
+              onClick={skipField}
+              disabled={isSaving}
+              className="h-14 rounded-2xl bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-300 font-bold active:scale-[0.98] transition-all disabled:opacity-60"
+            >
+              {stepInfo.skipLabel}
+            </button>
+            <button
+              onClick={nextField}
+              disabled={isSaving}
+              className={`bg-primary hover:bg-primary/90 text-white font-bold text-lg h-14 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-primary/30 active:scale-[0.98] transition-all ${isSaving ? 'opacity-70 cursor-not-allowed' : ''}`}
+            >
+              {isSaving ? (
+                <span className="material-symbols-outlined animate-spin">sync</span>
+              ) : (
+                <span className="material-symbols-outlined text-[20px]">{activeField === 'hr' ? 'check' : 'arrow_forward'}</span>
+              )}
+              {isSaving ? '保存中...' : (activeField === 'hr' ? '保存' : '下一步')}
+            </button>
+          </div>
         </div>
         <div className="grid grid-cols-3 gap-y-3 gap-x-3 px-4 pb-safe pt-2">
           {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(num => (
@@ -263,9 +383,9 @@ const RecordVitals: React.FC = () => {
             <div className="mb-5 bg-yellow-50 dark:bg-yellow-900/20 rounded-full p-4 flex items-center justify-center">
               <span className="material-symbols-outlined text-[32px] text-yellow-500">warning</span>
             </div>
-            <h3 className="text-xl font-bold text-[#140c1d] dark:text-white mb-3">数据未填写完整</h3>
+            <h3 className="text-xl font-bold text-[#140c1d] dark:text-white mb-3">请确认记录内容</h3>
             <p className="text-[15px] text-gray-500 dark:text-gray-400 leading-relaxed mb-8">
-              您还有部分体征数据未填写。是否继续保存？未填写的数据将被记录为 0。
+              血压需要同时填写收缩压和舒张压；如果只想记录血糖或心率，可以跳过血压后继续保存。
             </p>
             <div className="w-full flex flex-col gap-3">
               <button

@@ -18,7 +18,7 @@ const Symptoms: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const symptomId = searchParams.get('id');
-  const [selected, setSelected] = useState<string[]>(symptomId ? [symptomId] : ['2']);
+  const [selected, setSelected] = useState<string[]>(symptomId ? [symptomId] : ['1']);
   const [isSaving, setIsSaving] = useState(false);
 
   // Parse date/time from URL params
@@ -55,9 +55,16 @@ const Symptoms: React.FC = () => {
   }, [searchParams]);
 
   const toggleSymptom = (id: string) => {
-    setSelected(prev =>
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
+    setSelected(prev => {
+      if (id === '1') return ['1'];
+
+      const withoutGood = prev.filter(item => item !== '1');
+      const next = withoutGood.includes(id)
+        ? withoutGood.filter(item => item !== id)
+        : [...withoutGood, id];
+
+      return next.length > 0 ? next : ['1'];
+    });
   };
 
   // Format date as YYYY-MM-DD using local time (not UTC)

@@ -34,6 +34,12 @@ function json(res, status, data) {
     res.end(JSON.stringify(data));
 }
 
+function isMissingGlucoseTable(error) {
+    return error?.code === '42P01' ||
+        error?.code === 'PGRST205' ||
+        String(error?.message || '').includes('glucose_records');
+}
+
 // Helper: Get user from token (Supabase v1 compatible)
 async function getUser(req) {
     const authHeader = req.headers.authorization;
@@ -101,10 +107,24 @@ export default async function handler(req, res) {
             }
             if (method === 'POST') {
                 const body = await parseBody(req);
-                const { data, error } = await supabase
+                let { data, error } = await supabase
                     .from('vital_records')
                     .insert([{ user_id: user.id, ...body }])
                     .select();
+                if (error && String(error.message || '').includes('null value')) {
+                    const fallbackBody = {
+                        ...body,
+                        systolic: body.systolic ?? 0,
+                        diastolic: body.diastolic ?? 0,
+                        heart_rate: body.heart_rate ?? 0
+                    };
+                    const fallbackResult = await supabase
+                        .from('vital_records')
+                        .insert([{ user_id: user.id, ...fallbackBody }])
+                        .select();
+                    data = fallbackResult.data;
+                    error = fallbackResult.error;
+                }
                 if (error) throw error;
                 return json(res, 200, data[0]);
             }
@@ -144,6 +164,49 @@ export default async function handler(req, res) {
                 const body = await parseBody(req);
                 const { error } = await supabase
                     .from('symptom_logs')
+                    .delete()
+                    .in('id', body.ids || [])
+                    .eq('user_id', user.id);
+                if (error) throw error;
+                return json(res, 200, { success: true });
+            }
+        }
+
+        // === GLUCOSE ===
+        if (url.startsWith('/api/glucose')) {
+            if (method === 'GET') {
+                const { data, error } = await supabase
+                    .from('glucose_records')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('recorded_at', { ascending: false });
+                if (error) {
+                    if (isMissingGlucoseTable(error)) return json(res, 200, []);
+                    throw error;
+                }
+                return json(res, 200, data || []);
+            }
+            if (method === 'POST') {
+                const body = await parseBody(req);
+                const { data, error } = await supabase
+                    .from('glucose_records')
+                    .insert([{
+                        user_id: user.id,
+                        value: body.value,
+                        unit: body.unit || 'mmol/L',
+                        measurement_context: body.measurement_context || null,
+                        post_meal_timing: body.post_meal_timing || null,
+                        note: body.note || null,
+                        recorded_at: body.recorded_at || new Date().toISOString()
+                    }])
+                    .select();
+                if (error) throw error;
+                return json(res, 200, data[0]);
+            }
+            if (method === 'DELETE') {
+                const body = await parseBody(req);
+                const { error } = await supabase
+                    .from('glucose_records')
                     .delete()
                     .in('id', body.ids || [])
                     .eq('user_id', user.id);

@@ -3,10 +3,25 @@
 export interface VitalRecord {
     id: string;
     user_id: string;
-    systolic: number;
-    diastolic: number;
-    heart_rate: number;
+    systolic: number | null;
+    diastolic: number | null;
+    heart_rate: number | null;
     recorded_at: string;
+}
+
+export type GlucoseContext = 'fasting' | 'pre_meal' | 'post_meal' | 'random';
+export type PostMealTiming = 'within_30_min' | 'one_hour' | 'two_hours' | 'over_two_hours';
+
+export interface GlucoseRecord {
+    id: string;
+    user_id: string;
+    value: number;
+    unit: 'mmol/L';
+    measurement_context?: GlucoseContext | null;
+    post_meal_timing?: PostMealTiming | null;
+    note?: string | null;
+    recorded_at: string;
+    created_at?: string;
 }
 
 export interface AggregatedData {
@@ -15,6 +30,13 @@ export interface AggregatedData {
     systolic: number;
     diastolic: number;
     heart_rate: number;
+    count: number;
+}
+
+export interface GlucoseAggregatedData {
+    label: string;
+    date: Date;
+    value: number;
     count: number;
 }
 
@@ -65,6 +87,15 @@ export function startOfMonth(date: Date): Date {
     return d;
 }
 
+function averagePositive(records: VitalRecord[], field: 'systolic' | 'diastolic' | 'heart_rate'): number {
+    const values = records
+        .map(record => record[field])
+        .filter(value => typeof value === 'number' && value > 0);
+
+    if (values.length === 0) return 0;
+    return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
 // Group records by day and calculate averages
 export function aggregateByDay(records: VitalRecord[]): AggregatedData[] {
     const grouped: Map<string, VitalRecord[]> = new Map();
@@ -85,15 +116,101 @@ export function aggregateByDay(records: VitalRecord[]): AggregatedData[] {
         result.push({
             label: formatDateShort(date),
             date,
-            systolic: Math.round(dayRecords.reduce((sum, r) => sum + r.systolic, 0) / count),
-            diastolic: Math.round(dayRecords.reduce((sum, r) => sum + r.diastolic, 0) / count),
-            heart_rate: Math.round(dayRecords.reduce((sum, r) => sum + r.heart_rate, 0) / count),
+            systolic: averagePositive(dayRecords, 'systolic'),
+            diastolic: averagePositive(dayRecords, 'diastolic'),
+            heart_rate: averagePositive(dayRecords, 'heart_rate'),
             count
         });
     });
 
     return result.sort((a, b) => a.date.getTime() - b.date.getTime());
 }
+
+export function aggregateGlucoseByDay(records: GlucoseRecord[]): GlucoseAggregatedData[] {
+    const grouped: Map<string, GlucoseRecord[]> = new Map();
+
+    records.forEach(record => {
+        const date = startOfDay(new Date(record.recorded_at));
+        const key = date.toISOString();
+        if (!grouped.has(key)) {
+            grouped.set(key, []);
+        }
+        grouped.get(key)!.push(record);
+    });
+
+    const result: GlucoseAggregatedData[] = [];
+    grouped.forEach((dayRecords, key) => {
+        const date = new Date(key);
+        const count = dayRecords.length;
+        result.push({
+            label: formatDateShort(date),
+            date,
+            value: Number((dayRecords.reduce((sum, r) => sum + r.value, 0) / count).toFixed(1)),
+            count
+        });
+    });
+
+    return result.sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+export function getLatestGlucoseRecord(records: GlucoseRecord[]): GlucoseRecord | null {
+    return [...records]
+        .filter(record => typeof record.value === 'number' && record.recorded_at)
+        .sort((a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime())[0] || null;
+}
+
+export function formatGlucoseContext(record?: GlucoseRecord | null): string {
+    if (!record?.measurement_context || record.measurement_context === 'random') return '未标记时机';
+    if (record.measurement_context === 'fasting') return '空腹';
+    if (record.measurement_context === 'pre_meal') return '餐前';
+    if (record.measurement_context === 'post_meal') {
+        const timingMap: Record<PostMealTiming, string> = {
+            within_30_min: '餐后30分钟内',
+            one_hour: '餐后1小时',
+            two_hours: '餐后2小时',
+            over_two_hours: '餐后2小时以上',
+        };
+        return record.post_meal_timing ? timingMap[record.post_meal_timing] : '餐后';
+    }
+    return '未标记时机';
+}
+
+export function evaluateGlucose(record?: GlucoseRecord | null): { text: string; color: string; advice: string } {
+    if (!record || typeof record.value !== 'number') {
+        return { text: '暂无', color: 'gray', advice: '' };
+    }
+
+    if (record.value < 3.9) {
+        return { text: '偏低', color: 'yellow', advice: '血糖偏低，若伴随出汗、心慌或乏力，建议及时补充糖分并关注身体反应。' };
+    }
+
+    if (record.measurement_context === 'fasting' || record.measurement_context === 'pre_meal') {
+        if (record.value >= 4.4 && record.value <= 7.2) {
+            return { text: '正常', color: 'green', advice: '当前血糖处于常见餐前目标范围。' };
+        }
+        if (record.value > 7.2) {
+            return { text: '偏高', color: 'orange', advice: '餐前/空腹血糖偏高，建议结合近期饮食、运动和医生建议持续观察。' };
+        }
+        return { text: '需关注', color: 'yellow', advice: '血糖低于常见餐前目标范围，建议留意低血糖反应。' };
+    }
+
+    if (record.measurement_context === 'post_meal') {
+        if (record.value < 10) {
+            return { text: '正常', color: 'green', advice: '当前餐后血糖处于常见目标范围。' };
+        }
+        if (record.value >= 11.1) {
+            return { text: '偏高', color: 'red', advice: '餐后血糖明显偏高，建议复测并结合医生建议判断。' };
+        }
+        return { text: '偏高', color: 'orange', advice: '餐后血糖偏高，建议关注饮食结构和记录趋势。' };
+    }
+
+    if (record.value >= 11.1) {
+        return { text: '偏高', color: 'orange', advice: '随机血糖偏高，建议补充测量时机并持续观察。' };
+    }
+
+    return { text: '已记录', color: 'blue', advice: '建议标记空腹、餐前或餐后，以获得更准确判断。' };
+}
+
 
 // Group records by week and calculate averages
 export function aggregateByWeek(records: VitalRecord[]): AggregatedData[] {
@@ -115,9 +232,9 @@ export function aggregateByWeek(records: VitalRecord[]): AggregatedData[] {
         result.push({
             label: formatDateShort(date), // First day of week
             date,
-            systolic: Math.round(weekRecords.reduce((sum, r) => sum + r.systolic, 0) / count),
-            diastolic: Math.round(weekRecords.reduce((sum, r) => sum + r.diastolic, 0) / count),
-            heart_rate: Math.round(weekRecords.reduce((sum, r) => sum + r.heart_rate, 0) / count),
+            systolic: averagePositive(weekRecords, 'systolic'),
+            diastolic: averagePositive(weekRecords, 'diastolic'),
+            heart_rate: averagePositive(weekRecords, 'heart_rate'),
             count
         });
     });
@@ -145,9 +262,9 @@ export function aggregateByMonth(records: VitalRecord[]): AggregatedData[] {
         result.push({
             label: formatMonthShort(date),
             date,
-            systolic: Math.round(monthRecords.reduce((sum, r) => sum + r.systolic, 0) / count),
-            diastolic: Math.round(monthRecords.reduce((sum, r) => sum + r.diastolic, 0) / count),
-            heart_rate: Math.round(monthRecords.reduce((sum, r) => sum + r.heart_rate, 0) / count),
+            systolic: averagePositive(monthRecords, 'systolic'),
+            diastolic: averagePositive(monthRecords, 'diastolic'),
+            heart_rate: averagePositive(monthRecords, 'heart_rate'),
             count
         });
     });
@@ -163,9 +280,9 @@ export function formatRecordsForDisplay(records: VitalRecord[]): AggregatedData[
             return {
                 label: formatTime(date),
                 date,
-                systolic: record.systolic,
-                diastolic: record.diastolic,
-                heart_rate: record.heart_rate,
+                systolic: record.systolic || 0,
+                diastolic: record.diastolic || 0,
+                heart_rate: record.heart_rate || 0,
                 count: 1
             };
         })
@@ -205,9 +322,15 @@ export function getTimeAgoString(date: Date): string {
 // Get the N most recent records
 export function getLastNRecords(records: VitalRecord[], n: number = 3): VitalRecord[] {
     return [...records]
-        .filter(v => typeof v.systolic === 'number' && typeof v.diastolic === 'number')
+        .filter(v => typeof v.systolic === 'number' && v.systolic > 0 && typeof v.diastolic === 'number' && v.diastolic > 0)
         .sort((a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime())
         .slice(0, n);
+}
+
+export function getLatestHeartRateRecord(records: VitalRecord[]): VitalRecord | null {
+    return [...records]
+        .filter(v => typeof v.heart_rate === 'number' && v.heart_rate > 0 && v.recorded_at)
+        .sort((a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime())[0] || null;
 }
 
 // Evaluate BP based on comprehensive guidelines (Age, BMI, Gender)

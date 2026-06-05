@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { vitalService, symptomService } from '../services/api';
+import { glucoseService, vitalService, symptomService } from '../services/api';
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
+import { formatGlucoseContext } from '../utils/dataAggregation';
 
 const ExportReport: React.FC = () => {
   const navigate = useNavigate();
@@ -12,12 +12,13 @@ const ExportReport: React.FC = () => {
   const [timeRange, setTimeRange] = useState<'7days' | '30days' | 'custom'>((searchParams.get('range') as any) || '30days');
 
   const [vitals, setVitals] = useState<any[]>([]);
+  const [glucoseRecords, setGlucoseRecords] = useState<any[]>([]);
   const [symptoms, setSymptoms] = useState<any[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
 
   const [selectedData, setSelectedData] = useState({
     bp: true,
-    hr: true,
+    glucose: true,
     symptoms: true
   });
 
@@ -65,11 +66,13 @@ const ExportReport: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const [vData, sData] = await Promise.all([
+      const [vData, gData, sData] = await Promise.all([
         vitalService.getAll(),
+        glucoseService.getAll(),
         symptomService.getAll()
       ]);
       setVitals(vData);
+      setGlucoseRecords(gData);
       setSymptoms(sData);
     } catch (error) {
       console.error('Failed to load data for export', error);
@@ -92,11 +95,17 @@ const ExportReport: React.FC = () => {
       return d >= start && d <= end;
     });
 
+    const gFiltered = (Array.isArray(glucoseRecords) ? glucoseRecords : []).filter(g => {
+      const d = new Date(g.recorded_at);
+      return d >= start && d <= end;
+    });
+
     return {
       vitals: vFiltered,
+      glucose: gFiltered,
       symptoms: sFiltered
     };
-  }, [vitals, symptoms, dates]);
+  }, [vitals, glucoseRecords, symptoms, dates]);
 
   const formatDate = (date: Date) => {
     return `${date.getMonth() + 1}.${date.getDate()}`;
@@ -110,9 +119,9 @@ const ExportReport: React.FC = () => {
 
   const toggleSelectAll = () => {
     if (allSelected) {
-      setSelectedData({ bp: false, hr: false, symptoms: false });
+      setSelectedData({ bp: false, glucose: false, symptoms: false });
     } else {
-      setSelectedData({ bp: true, hr: true, symptoms: true });
+      setSelectedData({ bp: true, glucose: true, symptoms: true });
     }
   };
 
@@ -134,6 +143,18 @@ const ExportReport: React.FC = () => {
             value: `${v.systolic}/${v.diastolic} mmHg`,
             heartRate: `${v.heart_rate} bpm`,
             note: '-'
+          });
+        });
+      }
+
+      if (selectedData.glucose) {
+        filteredData.glucose.forEach(g => {
+          allData.push({
+            time: new Date(g.recorded_at),
+            type: '血糖',
+            value: `${Number(g.value).toFixed(1)} mmol/L`,
+            heartRate: '-',
+            note: formatGlucoseContext(g)
           });
         });
       }
@@ -328,6 +349,24 @@ const ExportReport: React.FC = () => {
             </label>
 
             <label
+              className={`flex items-center justify-between p-4 bg-white dark:bg-[#231530] rounded-xl border-2 shadow-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2a1d36] transition-colors ${selectedData.glucose ? 'border-primary/20' : 'border-transparent'}`}
+              onClick={() => toggleItem('glucose')}
+            >
+              <div className="flex items-center gap-4">
+                <div className="size-10 rounded-full bg-green-50 dark:bg-green-900/20 flex items-center justify-center text-green-500">
+                  <span className="material-symbols-outlined text-[20px]">bloodtype</span>
+                </div>
+                <div>
+                  <p className="font-bold text-[#140c1d] dark:text-white">血糖</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{filteredData.glucose.length} 条记录</p>
+                </div>
+              </div>
+              <div className={selectedData.glucose ? "text-primary" : "text-gray-300 dark:text-gray-600"}>
+                <span className="material-symbols-outlined text-[24px]">{selectedData.glucose ? 'check_box' : 'check_box_outline_blank'}</span>
+              </div>
+            </label>
+
+            <label
               className={`flex items-center justify-between p-4 bg-white dark:bg-[#231530] rounded-xl border-2 shadow-sm cursor-pointer hover:bg-gray-50 dark:hover:bg-[#2a1d36] transition-colors ${selectedData.symptoms ? 'border-primary/20' : 'border-transparent'}`}
               onClick={() => toggleItem('symptoms')}
             >
@@ -391,7 +430,7 @@ const ExportReport: React.FC = () => {
         </div>
         <button
           onClick={handleExport}
-          disabled={isGenerating || (!selectedData.bp && !selectedData.symptoms)}
+          disabled={isGenerating || (!selectedData.bp && !selectedData.glucose && !selectedData.symptoms)}
           className="w-full flex items-center justify-center gap-2 bg-primary disabled:bg-gray-300 hover:bg-primary/90 text-white rounded-xl py-4 shadow-lg shadow-primary/20 transition-all active:scale-[0.98]"
         >
           <span className="material-symbols-outlined text-[20px]">{isGenerating ? 'hourglass_empty' : 'ios_share'}</span>
@@ -439,6 +478,17 @@ const ExportReport: React.FC = () => {
                     value: `${v.systolic}/${v.diastolic} mmHg`,
                     heartRate: `${v.heart_rate} bpm`,
                     note: '-'
+                  });
+                });
+              }
+              if (selectedData.glucose) {
+                filteredData.glucose.forEach(g => {
+                  tableData.push({
+                    time: new Date(g.recorded_at),
+                    type: '血糖',
+                    value: `${Number(g.value).toFixed(1)} mmol/L`,
+                    heartRate: '-',
+                    note: formatGlucoseContext(g)
                   });
                 });
               }

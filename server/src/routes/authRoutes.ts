@@ -14,6 +14,14 @@ const profileSchema = z.object({
     weight: z.number().optional(),
     avatar_url: z.string().optional(),
     last_device_id: z.string().optional(),
+    health_goals: z.object({
+        bpSystolic: z.number(),
+        bpDiastolic: z.number(),
+        glucoseMin: z.number(),
+        glucoseMax: z.number(),
+        heartRateMin: z.number(),
+        heartRateMax: z.number(),
+    }).optional(),
 });
 
 // Get current user profile

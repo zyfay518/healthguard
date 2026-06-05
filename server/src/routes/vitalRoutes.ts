@@ -5,11 +5,11 @@ import { requireAuth, AuthRequest } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
-// Validation schema - allow 0 for incomplete records
+// Validation schema - allow null for skipped fields
 const vitalSchema = z.object({
-    systolic: z.number().int().min(0).max(300),
-    diastolic: z.number().int().min(0).max(200),
-    heart_rate: z.number().int().min(0).max(250),
+    systolic: z.number().int().min(0).max(300).nullable().optional(),
+    diastolic: z.number().int().min(0).max(200).nullable().optional(),
+    heart_rate: z.number().int().min(0).max(250).nullable().optional(),
     recorded_at: z.string().optional(), // Optional timestamp, defaults to now
 });
 
@@ -51,14 +51,29 @@ router.post('/', requireAuth, async (req: AuthRequest, res) => {
             insertData.recorded_at = validatedData.recorded_at;
         }
 
-        const { data, error } = await supabase
+        let { data, error } = await supabase
             .from('vital_records')
             .insert([insertData])
             .select();
 
+        if (error && String(error.message || '').includes('null value')) {
+            const fallbackData = {
+                ...insertData,
+                systolic: insertData.systolic ?? 0,
+                diastolic: insertData.diastolic ?? 0,
+                heart_rate: insertData.heart_rate ?? 0,
+            };
+            const fallbackResult = await supabase
+                .from('vital_records')
+                .insert([fallbackData])
+                .select();
+            data = fallbackResult.data;
+            error = fallbackResult.error;
+        }
+
         if (error) throw error;
 
-        res.json(data[0]);
+        res.json(data?.[0] || null);
     } catch (error: any) {
         res.status(400).json({ error: error.message });
     }

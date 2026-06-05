@@ -1,16 +1,52 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine } from 'recharts';
+import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../context/AuthContext';
-import { vitalService, symptomService, profileService } from '../services/api';
-import { VitalRecord, aggregateByDay, getTimeAgoString, getLastNRecords, evaluateBP, getBPThresholds } from '../utils/dataAggregation';
+import { vitalService, symptomService, profileService, glucoseService } from '../services/api';
+import {
+  VitalRecord,
+  GlucoseRecord,
+  aggregateByDay,
+  aggregateGlucoseByDay,
+  evaluateGlucose,
+  formatGlucoseContext,
+  getLatestGlucoseRecord,
+  getTimeAgoString,
+  getLastNRecords,
+  getLatestHeartRateRecord,
+  evaluateBP
+} from '../utils/dataAggregation';
 import ReminderModal from '../components/ReminderModal';
+
+const formatCardDateTime = (date: Date) => {
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const dayLabel = isToday
+    ? '今天'
+    : date.toDateString() === yesterday.toDateString()
+      ? '昨天'
+      : `${date.getMonth() + 1}月${date.getDate()}日`;
+  const timeLabel = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  return `${dayLabel} ${timeLabel}`;
+};
+
+const getTrendText = (values: number[]) => {
+  if (values.length < 2) return '暂无趋势';
+  const first = values[0];
+  const last = values[values.length - 1];
+  const diff = last - first;
+  if (Math.abs(diff) < 3) return '整体平稳';
+  return diff > 0 ? '较前上升' : '较前下降';
+};
 
 const Home: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [vitals, setVitals] = useState<VitalRecord[]>([]);
+  const [glucoseRecords, setGlucoseRecords] = useState<GlucoseRecord[]>([]);
   const [symptoms, setSymptoms] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [reminderTime, setReminderTime] = useState<{ hour: number; minute: number } | null>(null);
@@ -20,6 +56,7 @@ const Home: React.FC = () => {
 
   useEffect(() => {
     loadVitals();
+    loadGlucose();
     loadSymptoms();
     loadProfile();
     const saved = localStorage.getItem('healthguard_reminder');
@@ -73,7 +110,7 @@ const Home: React.FC = () => {
     }, 60000); // Check every minute
 
     return () => clearInterval(interval);
-  }, [reminderTime, vitals, symptoms]);
+  }, [reminderTime, vitals, symptoms, glucoseRecords]);
 
   const checkAndNotify = async () => {
     // Check if notification permission is granted
@@ -88,12 +125,13 @@ const Home: React.FC = () => {
 
     const recordedToday = [
       ...vitals.map(v => new Date(v.recorded_at)),
+      ...glucoseRecords.map(record => new Date(record.recorded_at)),
       ...symptoms.map(s => new Date(s.created_at || s.recorded_at))
     ].some(d => d >= today);
 
     if (!recordedToday) {
       new Notification('健康助手提醒', {
-        body: '记录时刻到啦！如果您还没记录今天的血压或症状，请及时打卡哦。',
+        body: '记录时刻到啦！如果今天还没记录血压、血糖或心率，可以按需打卡。',
         icon: '/icon-512.png'
       });
     }
@@ -117,6 +155,16 @@ const Home: React.FC = () => {
       setSymptoms(data || []);
     } catch (error) {
       console.error('Failed to load symptoms', error);
+    }
+  };
+
+  const loadGlucose = async () => {
+    try {
+      const data = await glucoseService.getAll();
+      setGlucoseRecords(data || []);
+    } catch (error) {
+      console.error('Failed to load glucose records', error);
+      setGlucoseRecords([]);
     }
   };
 
@@ -154,6 +202,8 @@ const Home: React.FC = () => {
     return vitals[0]; // Assuming sorted by date desc
   }, [vitals]);
 
+  const latestHeartRateRecord = useMemo(() => getLatestHeartRateRecord(vitals), [vitals]);
+
   // Get last 7 days of data aggregated by day for chart
   const chartData = useMemo(() => {
     if (!vitals || !Array.isArray(vitals) || vitals.length === 0) return [];
@@ -174,6 +224,16 @@ const Home: React.FC = () => {
     }));
   }, [vitals]);
 
+  const glucoseChartData = useMemo(() => {
+    if (!glucoseRecords || !Array.isArray(glucoseRecords) || glucoseRecords.length === 0) return [];
+
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    return aggregateGlucoseByDay(glucoseRecords.filter(record => new Date(record.recorded_at) >= sevenDaysAgo));
+  }, [glucoseRecords]);
+
   // Calculate average stats based on last 3 records
   const avgStats = useMemo(() => {
     if (!vitals || !Array.isArray(vitals) || vitals.length === 0) {
@@ -192,6 +252,71 @@ const Home: React.FC = () => {
       heartRate: Math.round(recentVitals.reduce((sum, v) => sum + v.heart_rate, 0) / count)
     };
   }, [vitals]);
+
+  const bloodPressureTimeRange = useMemo(() => {
+    const recentVitals = getLastNRecords(vitals, 3);
+    if (recentVitals.length === 0) return '暂无记录';
+
+    const times = recentVitals
+      .map(v => new Date(v.recorded_at))
+      .filter(d => !isNaN(d.getTime()))
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    if (times.length === 0) return '暂无记录';
+    if (times.length === 1) return formatCardDateTime(times[0]);
+
+    return `${formatCardDateTime(times[0])} - ${formatCardDateTime(times[times.length - 1])}`;
+  }, [vitals]);
+
+  const heartRateRecordTime = useMemo(() => {
+    if (!latestHeartRateRecord?.recorded_at) return '暂无记录';
+    return formatCardDateTime(new Date(latestHeartRateRecord.recorded_at));
+  }, [latestHeartRateRecord]);
+
+  const latestGlucose = useMemo(() => getLatestGlucoseRecord(glucoseRecords), [glucoseRecords]);
+  const glucoseStatus = useMemo(() => evaluateGlucose(latestGlucose), [latestGlucose]);
+  const glucoseRecordTime = useMemo(() => {
+    if (!latestGlucose?.recorded_at) return '暂无记录';
+    return formatCardDateTime(new Date(latestGlucose.recorded_at));
+  }, [latestGlucose]);
+
+  const bloodPressureTrendText = useMemo(() => (
+    getTrendText(chartData.map(item => item.systolic).filter(Boolean))
+  ), [chartData]);
+
+  const heartRateTrendText = useMemo(() => (
+    getTrendText(chartData.map(item => item.heart_rate).filter(Boolean))
+  ), [chartData]);
+
+  const glucoseTrendText = useMemo(() => (
+    getTrendText(glucoseChartData.map(item => item.value).filter(Boolean))
+  ), [glucoseChartData]);
+
+  const todayReminder = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+
+    const hasBloodPressureToday = vitals.some(v => {
+      const recordedAt = new Date(v.recorded_at);
+      return recordedAt >= start && v.systolic > 0 && v.diastolic > 0;
+    });
+    const hasGlucoseToday = glucoseRecords.some(record => new Date(record.recorded_at) >= start);
+    const hasHeartRateToday = vitals.some(v => {
+      const recordedAt = new Date(v.recorded_at);
+      return recordedAt >= start && v.heart_rate > 0;
+    });
+
+    const missing = [
+      !hasBloodPressureToday ? '血压' : null,
+      !hasGlucoseToday ? '血糖' : null,
+      !hasHeartRateToday ? '心率' : null,
+    ].filter(Boolean) as string[];
+
+    return {
+      missing,
+      completed: missing.length === 0,
+    };
+  }, [vitals, glucoseRecords]);
 
   // Get last record time
   const lastRecordTime = useMemo(() => {
@@ -252,27 +377,50 @@ const Home: React.FC = () => {
         </div>
       </div>
 
+      <div className="px-4 pb-2">
+        <button
+          onClick={() => navigate('/symptoms')}
+          className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border shadow-sm active:scale-[0.99] transition-transform ${todayReminder.completed ? 'bg-green-50 dark:bg-green-900/20 border-green-100 dark:border-green-800/30' : 'bg-amber-50 dark:bg-amber-900/20 border-amber-100 dark:border-amber-800/30'}`}
+        >
+          <div className="flex items-center gap-2 text-left">
+            <span className={`material-symbols-outlined text-[20px] ${todayReminder.completed ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
+              {todayReminder.completed ? 'task_alt' : 'notifications_active'}
+            </span>
+            <div>
+              <p className={`text-sm font-bold ${todayReminder.completed ? 'text-green-900 dark:text-green-100' : 'text-amber-900 dark:text-amber-100'}`}>
+                {todayReminder.completed ? '今日已完成记录' : `今日待记录：${todayReminder.missing.join('、')}`}
+              </p>
+              <p className={`text-xs ${todayReminder.completed ? 'text-green-700/70 dark:text-green-200/70' : 'text-amber-700/70 dark:text-amber-200/70'}`}>
+                {todayReminder.completed ? '血压、血糖、心率今天都有记录' : '按需记录即可，可以跳过暂时不测的项目'}
+              </p>
+            </div>
+          </div>
+          <span className={`material-symbols-outlined text-[20px] ${todayReminder.completed ? 'text-green-500' : 'text-amber-500'}`}>chevron_right</span>
+        </button>
+      </div>
+
       {/* Vitals Cards */}
       <section className="flex flex-col gap-4 p-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="flex flex-col gap-3 rounded-xl p-5 bg-white dark:bg-[#231530] shadow-sm border border-gray-100 dark:border-[#352345]">
-            <div className="flex items-center gap-2 mb-1">
-              <div className="size-8 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500">
-                <span className="material-symbols-outlined text-[20px]">favorite</span>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="flex min-h-[150px] flex-col gap-2 rounded-xl p-3 bg-white dark:bg-[#231530] shadow-sm border border-gray-100 dark:border-[#352345]">
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className="size-7 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500">
+                <span className="material-symbols-outlined text-[18px]">favorite</span>
               </div>
-              <p className="text-gray-600 dark:text-gray-300 text-sm font-medium">血压</p>
+              <p className="text-gray-600 dark:text-gray-300 text-xs font-medium">血压</p>
             </div>
             <div>
-              <div className="flex items-baseline gap-1">
-                <p className="text-[#140c1d] dark:text-white text-2xl font-bold leading-tight">
+              <div className="flex items-baseline gap-0.5">
+                <p className="text-[#140c1d] dark:text-white text-xl font-bold leading-tight">
                   {vitals.length > 0 ? avgStats.systolic : '--'}
                 </p>
-                <span className="text-gray-400 text-lg">/</span>
-                <p className="text-[#140c1d] dark:text-white text-2xl font-bold leading-tight">
+                <span className="text-gray-400 text-base">/</span>
+                <p className="text-[#140c1d] dark:text-white text-xl font-bold leading-tight">
                   {vitals.length > 0 ? avgStats.diastolic : '--'}
                 </p>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">mmHg <span className="text-[10px] text-gray-400">(近3次平均)</span></p>
+              <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">mmHg</p>
+              <p className="text-[10px] text-gray-400 leading-tight line-clamp-2">{bloodPressureTimeRange}</p>
             </div>
             <div className="flex items-center gap-1 mt-auto">
               {vitals.length > 0 && <span className={`material-symbols-outlined text-${bpStatus.color}-500 text-[16px]`}>
@@ -282,24 +430,49 @@ const Home: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-col gap-3 rounded-xl p-5 bg-white dark:bg-[#231530] shadow-sm border border-gray-100 dark:border-[#352345]">
-            <div className="flex items-center gap-2 mb-1">
-              <div className="size-8 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-500">
-                <span className="material-symbols-outlined text-[20px]">monitor_heart</span>
+          <div className="flex min-h-[150px] flex-col gap-2 rounded-xl p-3 bg-white dark:bg-[#231530] shadow-sm border border-gray-100 dark:border-[#352345]">
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className="size-7 rounded-full bg-green-50 dark:bg-green-900/20 flex items-center justify-center text-green-500">
+                <span className="material-symbols-outlined text-[18px]">bloodtype</span>
               </div>
-              <p className="text-gray-600 dark:text-gray-300 text-sm font-medium">心率</p>
+              <p className="text-gray-600 dark:text-gray-300 text-xs font-medium">血糖</p>
             </div>
             <div>
               <div className="flex items-baseline gap-1">
-                <p className="text-[#140c1d] dark:text-white text-3xl font-bold leading-tight">
-                  {latestVital?.heart_rate || avgStats.heartRate || '--'}
+                <p className="text-[#140c1d] dark:text-white text-2xl font-bold leading-tight">
+                  {latestGlucose ? latestGlucose.value.toFixed(1) : '--'}
                 </p>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">bpm</p>
+              <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">mmol/L</p>
+              <p className="text-[10px] text-gray-400 leading-tight line-clamp-2">{glucoseRecordTime}</p>
+            </div>
+            <div className="flex items-center gap-1 mt-auto">
+              {latestGlucose && <span className={`material-symbols-outlined text-${glucoseStatus.color}-500 text-[16px]`}>
+                {glucoseStatus.color === 'green' || glucoseStatus.color === 'blue' ? 'check_circle' : 'warning'}
+              </span>}
+              <p className={`text-${glucoseStatus.color}-600 dark:text-${glucoseStatus.color}-400 text-xs font-semibold whitespace-nowrap overflow-hidden text-ellipsis`} title={glucoseStatus.advice}>{glucoseStatus.text}</p>
+            </div>
+          </div>
+
+          <div className="flex min-h-[150px] flex-col gap-2 rounded-xl p-3 bg-white dark:bg-[#231530] shadow-sm border border-gray-100 dark:border-[#352345]">
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className="size-7 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-500">
+                <span className="material-symbols-outlined text-[18px]">monitor_heart</span>
+              </div>
+              <p className="text-gray-600 dark:text-gray-300 text-xs font-medium">心率</p>
+            </div>
+            <div>
+              <div className="flex items-baseline gap-1">
+                <p className="text-[#140c1d] dark:text-white text-2xl font-bold leading-tight">
+                  {latestHeartRateRecord?.heart_rate || avgStats.heartRate || '--'}
+                </p>
+              </div>
+              <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">bpm</p>
+              <p className="text-[10px] text-gray-400 leading-tight line-clamp-2">{heartRateRecordTime}</p>
             </div>
             <div className="flex items-center gap-1 mt-auto">
               <span className="material-symbols-outlined text-green-500 text-[16px]">check_circle</span>
-              <p className="text-green-600 dark:text-green-400 text-sm font-medium">静息</p>
+              <p className="text-green-600 dark:text-green-400 text-xs font-semibold">静息</p>
             </div>
           </div>
         </div>
@@ -321,87 +494,108 @@ const Home: React.FC = () => {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-[#140c1d] dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">每周概览</h2>
-            <p className="text-gray-500 dark:text-gray-400 text-sm">收缩压趋势</p>
+            <p className="text-gray-500 dark:text-gray-400 text-sm">过去 7 天趋势</p>
           </div>
           <button onClick={() => navigate('/trends')} className="text-primary text-sm font-semibold hover:underline">查看报告</button>
         </div>
-        <div className="bg-white dark:bg-[#231530] rounded-xl p-6 shadow-sm border border-gray-100 dark:border-[#352345] min-h-[220px]">
-          <div className="flex justify-between items-end mb-4">
-            <div className={`transition-opacity duration-300 ${loading && chartData.length === 0 ? 'opacity-30' : 'opacity-100'}`}>
-              <p className="text-[#140c1d] dark:text-white tracking-light text-[32px] font-bold leading-tight">
-                {chartData.length > 0 ? '稳定' : loading ? '加载中' : '暂无数据'}
-              </p>
-              <div className="flex items-center gap-1 text-green-500 mt-1">
-                <span className="material-symbols-outlined text-[16px]">trending_flat</span>
-                <span className="text-xs font-medium">处于健康范围内</span>
+        <div className="flex flex-col gap-3">
+          <div className="rounded-xl bg-white dark:bg-[#231530] border border-gray-100 dark:border-[#352345] shadow-sm p-4 min-h-[150px] flex flex-col">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-red-500 text-[20px]">favorite</span>
+                <p className="text-sm font-bold text-[#140c1d] dark:text-white">血压趋势</p>
               </div>
+              <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">{loading ? '同步中' : bloodPressureTrendText}</p>
             </div>
-            <p className="text-gray-400 text-xs font-medium bg-gray-50 dark:bg-white/5 px-2 py-1 rounded">过去 7 天</p>
+            <div className="mt-3 h-20">
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
+                    <defs>
+                      <linearGradient id="bpMiniGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#7b00ff" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="#7b00ff" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <Area isAnimationActive={!loading} type="monotone" dataKey="systolic" stroke="#7b00ff" strokeWidth={2} fill="url(#bpMiniGradient)" dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full rounded-lg bg-gray-50 dark:bg-white/5 flex items-center justify-center">
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <span className="material-symbols-outlined text-[24px]">show_chart</span>
+                    <span className="text-sm">暂无趋势记录</span>
+                  </div>
+                </div>
+              )}
+            </div>
+            <p className="mt-2 text-[11px] text-gray-400">过去 7 天收缩压变化</p>
           </div>
 
-          <div className="w-full h-[140px] relative flex items-center justify-center">
-            {loading && chartData.length === 0 ? (
-              <div className="flex flex-col items-center gap-2 animate-pulse w-full">
-                <div className="w-full h-24 bg-gray-100 dark:bg-white/5 rounded-xl"></div>
-                <span className="text-xs text-gray-400">正在同步...</span>
+          <div className="rounded-xl bg-white dark:bg-[#231530] border border-gray-100 dark:border-[#352345] shadow-sm p-4 min-h-[150px] flex flex-col">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-green-500 text-[20px]">bloodtype</span>
+              <p className="text-sm font-bold text-[#140c1d] dark:text-white">血糖趋势</p>
               </div>
-            ) : chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="gradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#7b00ff" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#7b00ff" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="label"
-                    tick={{ fontSize: 10, fill: '#9ca3af' }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    hide
-                    domain={[
-                      (dataMin: number) => Math.min(dataMin, 50),
-                      (dataMax: number) => Math.max(dataMax, getBPThresholds(profile?.age, profile?.gender).systolic + 10)
-                    ]}
-                  />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.9)', borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                    itemStyle={{ color: '#7b00ff', fontWeight: 'bold' }}
-                    cursor={{ stroke: '#7b00ff', strokeWidth: 1, strokeDasharray: '5 5' }}
-                  />
-                  <Area
-                    isAnimationActive={!loading}
-                    name="收缩压"
-                    type="monotone"
-                    dataKey="systolic"
-                    stroke="#7b00ff"
-                    strokeWidth={3}
-                    fill="url(#gradient)"
-                    dot={{ fill: '#fff', stroke: '#7b00ff', strokeWidth: 2, r: 3 }}
-                    activeDot={{ r: 5, fill: '#7b00ff', stroke: '#fff', strokeWidth: 2 }}
-                  />
-                  {/* Dynamic Threshold Line */}
-                  <ReferenceLine
-                    y={getBPThresholds(profile?.age, profile?.gender).systolic}
-                    stroke="#ef4444"
-                    strokeDasharray="3 3"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex flex-col items-center gap-1">
-                <span className="material-symbols-outlined text-gray-300 text-[32px]">show_chart</span>
-                <span className="text-sm text-gray-400">暂无趋势记录</span>
+              <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">{glucoseTrendText}</p>
+            </div>
+            <div className="mt-3 h-20">
+              {glucoseChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={glucoseChartData}>
+                    <defs>
+                      <linearGradient id="glucoseMiniGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.22} />
+                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <Area isAnimationActive={!loading} type="monotone" dataKey="value" stroke="#22c55e" strokeWidth={2} fill="url(#glucoseMiniGradient)" dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full rounded-lg bg-gray-50 dark:bg-white/5 flex items-center justify-center">
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <span className="material-symbols-outlined text-[24px]">show_chart</span>
+                    <span className="text-sm">等待血糖记录</span>
+                  </div>
+                </div>
+              )}
+            </div>
+            <p className="mt-2 text-[11px] text-gray-400">{latestGlucose ? formatGlucoseContext(latestGlucose) : '接入血糖后显示最近趋势'}</p>
+          </div>
+
+          <div className="rounded-xl bg-white dark:bg-[#231530] border border-gray-100 dark:border-[#352345] shadow-sm p-4 min-h-[150px] flex flex-col">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-blue-500 text-[20px]">monitor_heart</span>
+                <p className="text-sm font-bold text-[#140c1d] dark:text-white">心率趋势</p>
               </div>
-            )}
-            {loading && chartData.length > 0 && (
-              <div className="absolute inset-x-0 bottom-0 top-0 bg-white/40 dark:bg-black/20 backdrop-blur-[1px] flex items-center justify-center rounded-xl z-10 transition-all">
-                <div className="size-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-              </div>
-            )}
+              <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">{loading ? '同步中' : heartRateTrendText}</p>
+            </div>
+            <div className="mt-3 h-20">
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
+                    <defs>
+                      <linearGradient id="hrMiniGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.22} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <Area isAnimationActive={!loading} type="monotone" dataKey="heart_rate" stroke="#3b82f6" strokeWidth={2} fill="url(#hrMiniGradient)" dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full rounded-lg bg-gray-50 dark:bg-white/5 flex items-center justify-center">
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <span className="material-symbols-outlined text-[24px]">show_chart</span>
+                    <span className="text-sm">暂无趋势记录</span>
+                  </div>
+                </div>
+              )}
+            </div>
+            <p className="mt-2 text-[11px] text-gray-400">过去 7 天平均心率变化</p>
           </div>
         </div>
       </section>

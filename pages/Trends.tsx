@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine } from 'recharts';
-import { vitalService, profileService } from '../services/api';
+import { glucoseService, vitalService, profileService } from '../services/api';
 import {
+  GlucoseRecord,
   VitalRecord,
+  aggregateGlucoseByDay,
   aggregateByDay,
   aggregateByWeek,
   aggregateByMonth,
@@ -12,12 +14,18 @@ import {
   isSameDay,
   formatTime,
   getBPThresholds,
-  getHRThresholds
+  getHRThresholds,
+  formatGlucoseContext
 } from '../utils/dataAggregation';
 
 const Trends: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const recordColorClass = {
+    red: 'bg-red-50 dark:bg-red-900/20 text-red-500',
+    green: 'bg-green-50 dark:bg-green-900/20 text-green-500',
+    blue: 'bg-blue-50 dark:bg-blue-900/20 text-blue-500',
+  } as const;
 
   // Parse date range from URL params
   const getInitialDates = () => {
@@ -44,15 +52,19 @@ const Trends: React.FC = () => {
   const [vitals, setVitals] = useState<VitalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedRecordKeys, setSelectedRecordKeys] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
   const [profile, setProfile] = useState<{ age?: number; gender?: string } | null>(null);
+  const [glucoseRecords, setGlucoseRecords] = useState<GlucoseRecord[]>([]);
 
   // Load vitals data on mount only
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
+  const getRecordKey = (type: 'vital' | 'glucose', id?: string) => id ? `${type}:${id}` : '';
+
   useEffect(() => {
     loadVitals();
+    loadGlucose();
     loadProfile();
   }, [dateRange]);
 
@@ -91,6 +103,20 @@ const Trends: React.FC = () => {
     }
   };
 
+  const loadGlucose = async () => {
+    try {
+      const data = await glucoseService.getAll();
+      const filtered = (data || []).filter((record: GlucoseRecord) => {
+        const recordDate = new Date(record.recorded_at);
+        return recordDate >= dateRange.start && recordDate <= new Date(dateRange.end.getTime() + 86400000);
+      });
+      setGlucoseRecords(filtered);
+    } catch (error) {
+      console.error('Failed to load glucose records:', error);
+      setGlucoseRecords([]);
+    }
+  };
+
   // Aggregate data based on active tab
   const chartData = useMemo(() => {
     if (vitals.length === 0) return [];
@@ -117,48 +143,100 @@ const Trends: React.FC = () => {
     }
   }, [vitals, activeTab, dateRange]);
 
+  const glucoseChartData = useMemo(() => {
+    if (glucoseRecords.length === 0) return [];
+    return aggregateGlucoseByDay(glucoseRecords);
+  }, [glucoseRecords]);
+
+  const bloodPressureChartData = useMemo(() => (
+    chartData.filter(item => item.systolic > 0 || item.diastolic > 0)
+  ), [chartData]);
+
+  const heartRateChartData = useMemo(() => (
+    chartData.filter(item => item.heart_rate > 0)
+  ), [chartData]);
+
   // Calculate averages for display
   const avgStats = useMemo(() => {
-    const validVitals = vitals.filter(v =>
-      typeof v.systolic === 'number' &&
-      typeof v.diastolic === 'number' &&
-      typeof v.heart_rate === 'number'
+    const bloodPressureRecords = vitals.filter(v =>
+      typeof v.systolic === 'number' && v.systolic > 0 &&
+      typeof v.diastolic === 'number' && v.diastolic > 0
     );
+    const heartRateRecords = vitals.filter(v => typeof v.heart_rate === 'number' && v.heart_rate > 0);
 
-    if (validVitals.length === 0) {
+    if (bloodPressureRecords.length === 0 && heartRateRecords.length === 0) {
       return { systolic: 0, diastolic: 0, heartRate: 0, min: 0, max: 0 };
     }
-    const count = validVitals.length;
+
     return {
-      systolic: Math.round(validVitals.reduce((sum, v) => sum + v.systolic, 0) / count),
-      diastolic: Math.round(validVitals.reduce((sum, v) => sum + v.diastolic, 0) / count),
-      heartRate: Math.round(validVitals.reduce((sum, v) => sum + v.heart_rate, 0) / count),
-      min: Math.min(...validVitals.map(v => v.heart_rate)),
-      max: Math.max(...validVitals.map(v => v.heart_rate))
+      systolic: bloodPressureRecords.length > 0 ? Math.round(bloodPressureRecords.reduce((sum, v) => sum + v.systolic, 0) / bloodPressureRecords.length) : 0,
+      diastolic: bloodPressureRecords.length > 0 ? Math.round(bloodPressureRecords.reduce((sum, v) => sum + v.diastolic, 0) / bloodPressureRecords.length) : 0,
+      heartRate: heartRateRecords.length > 0 ? Math.round(heartRateRecords.reduce((sum, v) => sum + v.heart_rate, 0) / heartRateRecords.length) : 0,
+      min: heartRateRecords.length > 0 ? Math.min(...heartRateRecords.map(v => v.heart_rate)) : 0,
+      max: heartRateRecords.length > 0 ? Math.max(...heartRateRecords.map(v => v.heart_rate)) : 0
     };
   }, [vitals]);
 
+  const avgGlucose = useMemo(() => {
+    const values = glucoseRecords
+      .map(record => record.value)
+      .filter(value => typeof value === 'number' && value > 0);
+
+    if (values.length === 0) return 0;
+    return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1));
+  }, [glucoseRecords]);
+
   // Format records for list display
   const displayedRecords = useMemo(() => {
-    const records = vitals
+    const vitalRecords = vitals
       .filter(v => v.recorded_at)
       .map(v => {
         const dateObj = new Date(v.recorded_at);
         const isValidDate = !isNaN(dateObj.getTime());
+        const hasBloodPressure = v.systolic > 0 && v.diastolic > 0;
+        const hasHeartRate = v.heart_rate > 0;
         return {
           id: v.id,
+          key: getRecordKey('vital', v.id),
+          type: 'vital' as const,
           time: isValidDate ? formatTime(dateObj) : '--:--',
           date: isValidDate ? dateObj.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '未知',
           rawDate: isValidDate ? dateObj.getTime() : 0,
-          bp: `${v.systolic || '--'}/${v.diastolic || '--'}`,
-          hr: String(v.heart_rate || '--'),
-          label: '记录'
+          primary: hasBloodPressure ? `${v.systolic}/${v.diastolic}` : hasHeartRate ? String(v.heart_rate) : '--',
+          primaryUnit: hasBloodPressure ? 'mmHg' : hasHeartRate ? 'bpm' : '',
+          secondary: hasBloodPressure && hasHeartRate ? `${v.heart_rate} bpm` : '',
+          icon: hasBloodPressure ? 'favorite' : 'monitor_heart',
+          color: hasBloodPressure ? 'red' : 'blue',
+          label: hasBloodPressure ? '血压' : '心率'
         };
-      })
+      });
+
+    const glucoseList = glucoseRecords
+      .filter(record => record.recorded_at)
+      .map(record => {
+        const dateObj = new Date(record.recorded_at);
+        const isValidDate = !isNaN(dateObj.getTime());
+        return {
+          id: record.id,
+          key: getRecordKey('glucose', record.id),
+          type: 'glucose' as const,
+          time: isValidDate ? formatTime(dateObj) : '--:--',
+          date: isValidDate ? dateObj.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '未知',
+          rawDate: isValidDate ? dateObj.getTime() : 0,
+          primary: record.value.toFixed(1),
+          primaryUnit: 'mmol/L',
+          secondary: formatGlucoseContext(record),
+          icon: 'bloodtype',
+          color: 'green',
+          label: '血糖'
+        };
+      });
+
+    const records = [...vitalRecords, ...glucoseList]
       .sort((a, b) => b.rawDate - a.rawDate);
 
     return showAllRecords ? records : records.slice(0, 3);
-  }, [vitals, showAllRecords]);
+  }, [vitals, glucoseRecords, showAllRecords]);
 
   const handleDateSelect = () => {
     const startStr = dateRange.start.toISOString().split('T')[0];
@@ -189,21 +267,27 @@ const Trends: React.FC = () => {
     }
   };
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+  const toggleSelect = (key: string) => {
+    setSelectedRecordKeys(prev =>
+      prev.includes(key) ? prev.filter(i => i !== key) : [...prev, key]
     );
   };
 
   const handleDeleteSelected = async () => {
-    if (selectedIds.length === 0 || isDeleting) return;
+    if (selectedRecordKeys.length === 0 || isDeleting) return;
 
-    if (confirm(`确定要删除选中的 ${selectedIds.length} 条记录吗？`)) {
+    if (confirm(`确定要删除选中的 ${selectedRecordKeys.length} 条记录吗？`)) {
       setIsDeleting(true);
       try {
-        await vitalService.deleteMany(selectedIds);
-        await loadVitals(true); // Silent reload
-        setSelectedIds([]);
+        const vitalIds = selectedRecordKeys.filter(key => key.startsWith('vital:')).map(key => key.replace('vital:', ''));
+        const glucoseIds = selectedRecordKeys.filter(key => key.startsWith('glucose:')).map(key => key.replace('glucose:', ''));
+
+        await Promise.all([
+          vitalIds.length > 0 ? vitalService.deleteMany(vitalIds) : Promise.resolve(),
+          glucoseIds.length > 0 ? glucoseService.deleteMany(glucoseIds) : Promise.resolve(),
+        ]);
+        await Promise.all([loadVitals(true), loadGlucose()]);
+        setSelectedRecordKeys([]);
         setIsEditMode(false);
       } catch (error) {
         console.error('Failed to delete records:', error);
@@ -279,12 +363,12 @@ const Trends: React.FC = () => {
                 </div>
                 <div className={`mt-2 flex items-baseline gap-2 transition-opacity duration-300 ${loading && vitals.length === 0 ? 'opacity-30' : 'opacity-100'}`}>
                   <span className="text-3xl font-bold tracking-tight text-[#140c1d] dark:text-white">
-                    {vitals.length > 0 ? `${avgStats.systolic}/${avgStats.diastolic}` : '--/--'}
+                    {bloodPressureChartData.length > 0 ? `${avgStats.systolic}/${avgStats.diastolic}` : '--/--'}
                   </span>
                   <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">mmHg (平均)</span>
                 </div>
               </div>
-              {!loading && vitals.length > 0 && (
+              {!loading && bloodPressureChartData.length > 0 && (
                 <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-600 bg-green-50 dark:bg-green-900/30 px-2 py-1 rounded-md self-end">
                   <span className="material-symbols-outlined text-[14px]">check_circle</span> 正常
                 </span>
@@ -297,14 +381,14 @@ const Trends: React.FC = () => {
                   <div className="w-full h-32 bg-gray-100 dark:bg-white/5 rounded-xl"></div>
                   <span className="text-xs text-gray-400">正在获取数据...</span>
                 </div>
-              ) : vitals.length === 0 ? (
+              ) : bloodPressureChartData.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-6 gap-2">
                   <span className="material-symbols-outlined text-[32px] text-gray-200">sentiment_dissatisfied</span>
                   <span className="text-sm text-gray-400">该时段暂无记录</span>
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData}>
+                  <AreaChart data={bloodPressureChartData}>
                     <defs>
                       <linearGradient id="gradSys" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#7b00ff" stopOpacity={0.15} />
@@ -342,6 +426,56 @@ const Trends: React.FC = () => {
             </div>
           </div>
 
+          {/* Glucose Chart */}
+          <div className="flex flex-col gap-4 bg-white dark:bg-[#231530] rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-[#352345] min-h-[220px] transition-all">
+            <div className="flex items-start justify-between">
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <div className="size-8 rounded-full bg-green-50 dark:bg-green-900/20 flex items-center justify-center text-green-500">
+                    <span className="material-symbols-outlined text-[20px]">bloodtype</span>
+                  </div>
+                  <h2 className="font-bold text-lg text-gray-800 dark:text-white">血糖</h2>
+                </div>
+                <div className={`mt-2 flex items-baseline gap-2 transition-opacity duration-300 ${loading && glucoseRecords.length === 0 ? 'opacity-30' : 'opacity-100'}`}>
+                  <span className="text-3xl font-bold tracking-tight text-[#140c1d] dark:text-white">
+                    {glucoseRecords.length > 0 ? avgGlucose.toFixed(1) : '--'}
+                  </span>
+                  <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">mmol/L (平均)</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="relative w-full h-[140px] mt-2 select-none flex items-center justify-center">
+              {loading && glucoseRecords.length === 0 ? (
+                <div className="w-full h-24 bg-gray-100 dark:bg-white/5 rounded-xl animate-pulse"></div>
+              ) : glucoseRecords.length === 0 ? (
+                <div className="text-sm text-gray-400 font-medium">暂无血糖记录</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={glucoseChartData}>
+                    <defs>
+                      <linearGradient id="gradGlucose" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.15} />
+                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                    <YAxis hide domain={[(dataMin: number) => Math.min(dataMin, 3), (dataMax: number) => Math.max(dataMax, 12)]} />
+                    <Tooltip
+                      formatter={(value: number) => [`${Number(value).toFixed(1)} mmol/L`, '血糖']}
+                      labelFormatter={(label) => `日期 ${label}`}
+                      contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                      cursor={{ stroke: '#22c55e', strokeWidth: 1, strokeDasharray: '5 5' }}
+                    />
+                    <Area isAnimationActive={!loading} name="血糖" type="monotone" dataKey="value" stroke="#22c55e" fill="url(#gradGlucose)" strokeWidth={2.5} dot={{ r: 3, fill: 'white', stroke: '#22c55e', strokeWidth: 2 }} />
+                    <ReferenceLine y={7.2} stroke="#f97316" strokeDasharray="3 3" />
+                    <ReferenceLine y={4.4} stroke="#22c55e" strokeDasharray="3 3" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
           {/* HR Chart */}
           <div className="flex flex-col gap-4 bg-white dark:bg-[#231530] rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-[#352345] min-h-[220px] transition-all">
             <div className="flex items-start justify-between">
@@ -354,7 +488,7 @@ const Trends: React.FC = () => {
                 </div>
                 <div className={`mt-2 flex items-baseline gap-2 transition-opacity duration-300 ${loading && vitals.length === 0 ? 'opacity-30' : 'opacity-100'}`}>
                   <span className="text-3xl font-bold tracking-tight text-[#140c1d] dark:text-white">
-                    {vitals.length > 0 ? avgStats.heartRate : '--'}
+                    {heartRateChartData.length > 0 ? avgStats.heartRate : '--'}
                   </span>
                   <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">bpm (平均)</span>
                 </div>
@@ -364,11 +498,11 @@ const Trends: React.FC = () => {
             <div className="relative w-full h-[140px] mt-2 select-none flex items-center justify-center">
               {loading && vitals.length === 0 ? (
                 <div className="w-full h-24 bg-gray-100 dark:bg-white/5 rounded-xl animate-pulse"></div>
-              ) : vitals.length === 0 ? (
+              ) : heartRateChartData.length === 0 ? (
                 <div className="text-sm text-gray-400 font-medium">暂无记录</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData}>
+                  <AreaChart data={heartRateChartData}>
                     <defs>
                       <linearGradient id="gradHr" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15} />
@@ -401,11 +535,11 @@ const Trends: React.FC = () => {
         <section className="flex flex-col gap-4">
           <div className="flex items-center justify-between px-1">
             <h2 className="text-lg font-bold text-[#140c1d] dark:text-white">详细记录</h2>
-            {vitals.length > 0 && (
+            {displayedRecords.length > 0 && (
               <button
                 onClick={() => {
                   if (isEditMode) {
-                    setSelectedIds([]);
+                    setSelectedRecordKeys([]);
                   }
                   setIsEditMode(!isEditMode);
                 }}
@@ -417,11 +551,11 @@ const Trends: React.FC = () => {
           </div>
 
           <div className="flex flex-col gap-3 min-h-[100px]">
-            {loading && vitals.length === 0 ? (
+            {loading && displayedRecords.length === 0 ? (
               Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="h-20 bg-white dark:bg-[#231530] rounded-2xl animate-pulse border border-gray-100 dark:border-[#352345]"></div>
               ))
-            ) : vitals.length === 0 ? (
+            ) : displayedRecords.length === 0 ? (
               <div className="bg-white dark:bg-[#231530] rounded-2xl p-8 border border-gray-100 dark:border-[#352345] flex flex-col items-center justify-center gap-2">
                 <span className="material-symbols-outlined text-gray-200 text-[40px]">history</span>
                 <p className="text-gray-400 text-sm">暂无详细记录</p>
@@ -429,27 +563,31 @@ const Trends: React.FC = () => {
             ) : (
               displayedRecords.map((record) => (
                 <div
-                  key={record.id}
-                  onClick={() => isEditMode && record.id && toggleSelect(record.id)}
-                  className={`group relative flex items-center justify-between p-4 bg-white dark:bg-[#231530] rounded-2xl shadow-sm border transition-all active:scale-[0.98] ${isEditMode && record.id && selectedIds.includes(record.id) ? 'border-primary ring-1 ring-primary' : 'border-gray-100 dark:border-[#352345]'}`}
+                  key={record.key}
+                  onClick={() => isEditMode && record.key && toggleSelect(record.key)}
+                  className={`group relative flex items-center justify-between p-4 bg-white dark:bg-[#231530] rounded-2xl shadow-sm border transition-all active:scale-[0.98] ${isEditMode && record.key && selectedRecordKeys.includes(record.key) ? 'border-primary ring-1 ring-primary' : 'border-gray-100 dark:border-[#352345]'}`}
                 >
                   <div className="flex items-center gap-4">
                     {isEditMode && (
-                      <div className={`size-5 rounded-full border-2 flex items-center justify-center transition-colors ${record.id && selectedIds.includes(record.id) ? 'bg-primary border-primary' : 'border-gray-300'}`}>
-                        {record.id && selectedIds.includes(record.id) && <span className="material-symbols-outlined text-[14px] text-white font-bold">check</span>}
+                      <div className={`size-5 rounded-full border-2 flex items-center justify-center transition-colors ${record.key && selectedRecordKeys.includes(record.key) ? 'bg-primary border-primary' : 'border-gray-300'}`}>
+                        {record.key && selectedRecordKeys.includes(record.key) && <span className="material-symbols-outlined text-[14px] text-white font-bold">check</span>}
                       </div>
                     )}
+                    <div className={`size-10 rounded-xl ${recordColorClass[record.color as keyof typeof recordColorClass]} flex items-center justify-center`}>
+                      <span className="material-symbols-outlined text-[20px]">{record.icon}</span>
+                    </div>
                     <div className="flex flex-col">
                       <p className="text-[#140c1d] dark:text-white font-bold text-lg leading-tight">
-                        {record.bp}
-                        <span className="ml-2 text-xs text-gray-400 font-normal uppercase">mmHg</span>
+                        {record.primary}
+                        <span className="ml-2 text-xs text-gray-400 font-normal uppercase">{record.primaryUnit}</span>
                       </p>
-                      <p className="text-xs text-gray-500 font-medium mt-1">{record.time}</p>
+                      <p className="text-xs text-gray-500 font-medium mt-1">{record.date} {record.time}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-right">
                     <div className="flex flex-col">
-                      <p className="text-[#140c1d] dark:text-white font-bold leading-tight">{record.hr}<span className="text-[10px] text-gray-400 font-normal ml-0.5 uppercase">bpm</span></p>
+                      <p className="text-[#140c1d] dark:text-white font-bold leading-tight">{record.label}</p>
+                      {record.secondary && <p className="text-[10px] text-gray-400 font-normal mt-0.5">{record.secondary}</p>}
                       {record.rawDate > new Date().setHours(0, 0, 0, 0) && (
                         <span className="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded-md font-bold mt-1 inline-block">新记录</span>
                       )}
@@ -458,12 +596,12 @@ const Trends: React.FC = () => {
                 </div>
               ))
             )}
-            {!showAllRecords && vitals.length > 3 && (
+            {!showAllRecords && (vitals.length + glucoseRecords.length) > 3 && (
               <button
                 onClick={() => setShowAllRecords(true)}
                 className="w-full py-4 text-sm font-bold text-gray-500 hover:text-primary transition-colors hover:bg-white dark:hover:bg-white/5 rounded-2xl border border-dashed border-gray-200 dark:border-white/10 mt-2"
               >
-                查看全部 {vitals.length} 条记录
+                查看全部 {vitals.length + glucoseRecords.length} 条记录
               </button>
             )}
           </div>
@@ -471,11 +609,11 @@ const Trends: React.FC = () => {
       </main>
 
       {/* Bulk Action Bar */}
-      {isEditMode && selectedIds.length > 0 && (
+      {isEditMode && selectedRecordKeys.length > 0 && (
         <div className="fixed bottom-24 left-4 right-4 max-w-md mx-auto z-40 animate-in slide-in-from-bottom duration-300">
           <div className="bg-[#140c1d] text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between border border-white/10">
             <div className="flex items-center gap-3 pl-2">
-              <span className="text-sm font-medium">已选择 <span className="text-primary-light font-bold text-lg">{selectedIds.length}</span> 项记录</span>
+              <span className="text-sm font-medium">已选择 <span className="text-primary-light font-bold text-lg">{selectedRecordKeys.length}</span> 项记录</span>
             </div>
             <button
               onClick={handleDeleteSelected}

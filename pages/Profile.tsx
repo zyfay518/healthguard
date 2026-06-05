@@ -2,6 +2,24 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { profileService } from '../services/api';
 
+type HealthGoals = {
+  bpSystolic: number;
+  bpDiastolic: number;
+  glucoseMin: number;
+  glucoseMax: number;
+  heartRateMin: number;
+  heartRateMax: number;
+};
+
+const defaultHealthGoals: HealthGoals = {
+  bpSystolic: 120,
+  bpDiastolic: 80,
+  glucoseMin: 4.4,
+  glucoseMax: 7.2,
+  heartRateMin: 60,
+  heartRateMax: 100,
+};
+
 const Profile: React.FC = () => {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<any>(null);
@@ -16,6 +34,9 @@ const Profile: React.FC = () => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState('/default-avatar.png');
   const [isSaving, setIsSaving] = useState(false);
+  const [healthGoals, setHealthGoals] = useState<HealthGoals>(defaultHealthGoals);
+  const [goalDraft, setGoalDraft] = useState<HealthGoals>(defaultHealthGoals);
+  const [isEditingGoals, setIsEditingGoals] = useState(false);
 
   // Editing states for chips
   const [editingField, setEditingField] = useState<string | null>(null);
@@ -47,6 +68,7 @@ const Profile: React.FC = () => {
           if (data.height) setHeight(data.height);
           if (data.weight) setWeight(data.weight);
           if (data.avatar_url) setAvatarUrl(data.avatar_url);
+          loadGoalsFromProfile(data);
           setLoading(false);
           return;
         }
@@ -62,6 +84,7 @@ const Profile: React.FC = () => {
         if (data.height) setHeight(data.height);
         if (data.weight) setWeight(data.weight);
         if (data.avatar_url) setAvatarUrl(data.avatar_url);
+        loadGoalsFromProfile(data);
         // Update cache
         localStorage.setItem('healthguard_profile_cache', JSON.stringify({
           data,
@@ -72,6 +95,52 @@ const Profile: React.FC = () => {
       console.error('Failed to load profile', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadGoalsFromProfile = (data: any) => {
+    const cachedGoals = localStorage.getItem('healthguard_health_goals');
+    const nextGoals = data?.health_goals || (cachedGoals ? JSON.parse(cachedGoals) : null) || defaultHealthGoals;
+    setHealthGoals({ ...defaultHealthGoals, ...nextGoals });
+    setGoalDraft({ ...defaultHealthGoals, ...nextGoals });
+  };
+
+  const updateGoalDraft = (field: keyof HealthGoals, value: string) => {
+    const parsed = Number(value);
+    setGoalDraft(prev => ({
+      ...prev,
+      [field]: Number.isFinite(parsed) ? parsed : prev[field],
+    }));
+  };
+
+  const handleSaveGoals = async () => {
+    const normalizedGoals = {
+      bpSystolic: Math.round(goalDraft.bpSystolic),
+      bpDiastolic: Math.round(goalDraft.bpDiastolic),
+      glucoseMin: Number(goalDraft.glucoseMin.toFixed(1)),
+      glucoseMax: Number(goalDraft.glucoseMax.toFixed(1)),
+      heartRateMin: Math.round(goalDraft.heartRateMin),
+      heartRateMax: Math.round(goalDraft.heartRateMax),
+    };
+
+    setIsSaving(true);
+    try {
+      setHealthGoals(normalizedGoals);
+      setGoalDraft(normalizedGoals);
+      localStorage.setItem('healthguard_health_goals', JSON.stringify(normalizedGoals));
+      await profileService.update({ health_goals: normalizedGoals });
+      localStorage.removeItem('healthguard_profile_cache');
+      setIsEditingGoals(false);
+    } catch (error: any) {
+      const message = error.response?.data?.error || error.message || '';
+      if (message.includes('health_goals') || message.includes('column')) {
+        setIsEditingGoals(false);
+        alert('目标已保存在本机。上线前执行 health_goals SQL 后，可同步到账号。');
+      } else {
+        alert('保存失败，请重试。');
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -164,6 +233,49 @@ const Profile: React.FC = () => {
 
   const bmi = weight / ((height / 100) * (height / 100)) || 0;
   const bmiInfo = getBMICategory(bmi);
+  const referenceCards = [
+    {
+      title: '血压参考',
+      icon: 'favorite',
+      tone: 'red',
+      value: '<120 / <80',
+      unit: 'mmHg',
+      detail: `${age}岁成人正常血压通常参考收缩压低于 120 且舒张压低于 80；年龄会影响风险评估，但家庭记录仍建议先按成人通用分类观察趋势。`,
+      source: '来源：American Heart Association - Understanding Blood Pressure Readings',
+    },
+    {
+      title: '血糖参考',
+      icon: 'bloodtype',
+      tone: 'green',
+      value: '4.4-7.2',
+      unit: 'mmol/L',
+      detail: `当前 BMI 为 ${bmi.toFixed(1)}。ADA 成人糖尿病管理目标常用餐前 4.4-7.2 mmol/L；餐后峰值通常参考低于 10.0 mmol/L，目标需结合年龄、用药和医生建议个体化。`,
+      source: '来源：ADA Standards of Care in Diabetes 2026',
+    },
+    {
+      title: '心率参考',
+      icon: 'monitor_heart',
+      tone: 'blue',
+      value: '60-100',
+      unit: 'bpm',
+      detail: `${age}岁成人安静状态下心率常见范围为 60-100 bpm；运动水平、药物、压力、睡眠和咖啡因都会影响心率。`,
+      source: '来源：American Heart Association - All About Heart Rate',
+    },
+  ];
+  const referenceToneClass = {
+    red: {
+      icon: 'bg-red-50 dark:bg-red-900/20 text-red-500',
+      badge: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-300',
+    },
+    green: {
+      icon: 'bg-green-50 dark:bg-green-900/20 text-green-500',
+      badge: 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-300',
+    },
+    blue: {
+      icon: 'bg-blue-50 dark:bg-blue-900/20 text-blue-500',
+      badge: 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300',
+    },
+  } as const;
 
   if (loading) return <div>Loading...</div>;
 
@@ -325,6 +437,81 @@ const Profile: React.FC = () => {
           </div>
         </div>
 
+        <section className="bg-white dark:bg-[#231530] rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-[#352345]">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-3">
+              <div className="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                <span className="material-symbols-outlined">flag</span>
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-[#140c1d] dark:text-white">健康目标</h3>
+                <p className="text-xs text-gray-400">用于个人记录，不作为诊断依据</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setGoalDraft(healthGoals);
+                setIsEditingGoals(!isEditingGoals);
+              }}
+              className="size-9 rounded-xl bg-gray-50 dark:bg-white/5 text-gray-500 dark:text-gray-300 flex items-center justify-center active:scale-95 transition-transform"
+            >
+              <span className="material-symbols-outlined text-[20px]">{isEditingGoals ? 'close' : 'edit'}</span>
+            </button>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-gray-50 dark:bg-white/5 p-3">
+              <p className="text-[10px] font-semibold text-gray-400">血压</p>
+              <p className="mt-1 text-sm font-black text-[#140c1d] dark:text-white">{healthGoals.bpSystolic}/{healthGoals.bpDiastolic}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-white/5 p-3">
+              <p className="text-[10px] font-semibold text-gray-400">血糖</p>
+              <p className="mt-1 text-sm font-black text-[#140c1d] dark:text-white">{healthGoals.glucoseMin.toFixed(1)}-{healthGoals.glucoseMax.toFixed(1)}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-white/5 p-3">
+              <p className="text-[10px] font-semibold text-gray-400">心率</p>
+              <p className="mt-1 text-sm font-black text-[#140c1d] dark:text-white">{healthGoals.heartRateMin}-{healthGoals.heartRateMax}</p>
+            </div>
+          </div>
+          {isEditingGoals && (
+            <div className="mt-4 rounded-2xl bg-gray-50 dark:bg-white/5 p-4 border border-gray-100 dark:border-white/10">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-semibold text-gray-400">收缩压目标</span>
+                  <input type="number" value={goalDraft.bpSystolic} onChange={(e) => updateGoalDraft('bpSystolic', e.target.value)} className="rounded-xl border-transparent bg-white dark:bg-[#231530] text-sm font-bold text-center focus:border-primary focus:ring-primary" />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-semibold text-gray-400">舒张压目标</span>
+                  <input type="number" value={goalDraft.bpDiastolic} onChange={(e) => updateGoalDraft('bpDiastolic', e.target.value)} className="rounded-xl border-transparent bg-white dark:bg-[#231530] text-sm font-bold text-center focus:border-primary focus:ring-primary" />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-semibold text-gray-400">血糖下限</span>
+                  <input type="number" step="0.1" value={goalDraft.glucoseMin} onChange={(e) => updateGoalDraft('glucoseMin', e.target.value)} className="rounded-xl border-transparent bg-white dark:bg-[#231530] text-sm font-bold text-center focus:border-primary focus:ring-primary" />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-semibold text-gray-400">血糖上限</span>
+                  <input type="number" step="0.1" value={goalDraft.glucoseMax} onChange={(e) => updateGoalDraft('glucoseMax', e.target.value)} className="rounded-xl border-transparent bg-white dark:bg-[#231530] text-sm font-bold text-center focus:border-primary focus:ring-primary" />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-semibold text-gray-400">心率下限</span>
+                  <input type="number" value={goalDraft.heartRateMin} onChange={(e) => updateGoalDraft('heartRateMin', e.target.value)} className="rounded-xl border-transparent bg-white dark:bg-[#231530] text-sm font-bold text-center focus:border-primary focus:ring-primary" />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-semibold text-gray-400">心率上限</span>
+                  <input type="number" value={goalDraft.heartRateMax} onChange={(e) => updateGoalDraft('heartRateMax', e.target.value)} className="rounded-xl border-transparent bg-white dark:bg-[#231530] text-sm font-bold text-center focus:border-primary focus:ring-primary" />
+                </label>
+              </div>
+              <button
+                onClick={handleSaveGoals}
+                disabled={isSaving}
+                className="mt-4 w-full h-11 rounded-xl bg-primary text-white text-sm font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-60"
+              >
+                <span className="material-symbols-outlined text-[18px]">{isSaving ? 'sync' : 'check'}</span>
+                {isSaving ? '保存中...' : '保存目标'}
+              </button>
+            </div>
+          )}
+        </section>
+
         <section onClick={() => navigate('/bmi-info')} className="cursor-pointer bg-white dark:bg-[#231530] rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-[#352345] relative overflow-hidden active:scale-[0.99] transition-transform">
           <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
             <span className="material-symbols-outlined text-[100px] text-primary">accessibility_new</span>
@@ -348,6 +535,54 @@ const Profile: React.FC = () => {
               <div className={`size-12 rounded-2xl ${bmiInfo.bg} flex items-center justify-center`}>
                 <span className={`material-symbols-outlined text-[28px] ${bmiInfo.color}`}>{bmiInfo.icon}</span>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-[#140c1d] dark:text-white">指标参考</h3>
+            <span className="text-xs font-semibold text-gray-400">非诊断建议</span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
+            {referenceCards.map((item) => (
+              <div key={item.title} className="bg-white dark:bg-[#231530] rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-[#352345]">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className={`size-10 rounded-xl ${referenceToneClass[item.tone as keyof typeof referenceToneClass].icon} flex items-center justify-center`}>
+                      <span className="material-symbols-outlined">{item.icon}</span>
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-[#140c1d] dark:text-white">{item.title}</p>
+                      <p className="text-xs text-gray-400">{item.unit}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-black text-[#140c1d] dark:text-white">{item.value}</p>
+                    <span className={`inline-flex mt-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${referenceToneClass[item.tone as keyof typeof referenceToneClass].badge}`}>参考范围</span>
+                  </div>
+                </div>
+                <p className="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{item.detail}</p>
+                <p className="mt-2 text-[10px] font-medium text-gray-400">{item.source}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-white dark:bg-[#231530] rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-[#352345]">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="size-10 rounded-xl bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-300 flex items-center justify-center">
+                <span className="material-symbols-outlined">menu_book</span>
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-[#140c1d] dark:text-white">指南与来源</h4>
+                <p className="text-xs text-gray-400">这些范围用于健康记录参考</p>
+              </div>
+            </div>
+            <div className="space-y-2 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+              <p>血压分类采用 AHA 成人血压读数口径；单次家庭测量不能替代诊室诊断。</p>
+              <p>血糖目标采用 ADA 成人糖尿病管理目标口径；非糖尿病、孕期、儿童或用药人群应遵循医生建议。</p>
+              <p>心率范围采用 AHA 成人静息心率常见范围；运动员、服药或存在心血管疾病时可能不同。</p>
             </div>
           </div>
         </section>

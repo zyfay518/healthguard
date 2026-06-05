@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes';
 import vitalRoutes from './routes/vitalRoutes';
 import symptomRoutes from './routes/symptomRoutes';
+import glucoseRoutes from './routes/glucoseRoutes';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/vitals', vitalRoutes);
 app.use('/api/symptoms', symptomRoutes);
+app.use('/api/glucose', glucoseRoutes);
 
 app.get('/', (req, res) => {
     res.send('HealthGuard API is running');

@@ -72,6 +72,21 @@ export const symptomService = {
     },
 };
 
+export const glucoseService = {
+    getAll: async () => {
+        const response = await api.get('/glucose');
+        return response.data;
+    },
+    create: async (data: any) => {
+        const response = await api.post('/glucose', data);
+        return response.data;
+    },
+    deleteMany: async (ids: string[]) => {
+        const response = await api.delete('/glucose', { data: { ids } });
+        return response.data;
+    },
+};
+
 export const profileService = {
     get: async () => {
         const response = await api.get('/auth/profile');
