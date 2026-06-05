@@ -3,31 +3,41 @@ import { supabase } from '../lib/supabase';
 
 const api = axios.create({
     baseURL: import.meta.env.VITE_API_URL || '/api',
+    timeout: 15000,
 });
+
+const RETRYABLE_METHODS = new Set(['get', 'head', 'options', 'put']);
+const MAX_RETRIES = 2;
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Interceptor to add auth token
 api.interceptors.request.use(async (config) => {
     const session = supabase.auth.session();
-    console.log('Session:', session); // Debug log
     if (session?.access_token) {
         config.headers.Authorization = `Bearer ${session.access_token}`;
-        console.log('Added auth header'); // Debug log
-    } else {
-        console.warn('No session or access_token found');
     }
     return config;
 });
-// Response interceptor to debug errors
+
 api.interceptors.response.use(
     response => response,
-    error => {
-        console.error('API Error Details:', {
-            url: error.config?.url,
-            method: error.config?.method,
-            status: error.response?.status,
-            data: error.response?.data,
-            headers: error.response?.headers
-        });
+    async (error) => {
+        const config = error.config || {};
+        const method = String(config.method || 'get').toLowerCase();
+        const status = error.response?.status;
+        const errorCode = error.response?.data?.code || error.code;
+        const shouldRetry =
+            RETRYABLE_METHODS.has(method) &&
+            (status >= 500 || !error.response || errorCode === 'ECONNABORTED' || errorCode === 'ECONNRESET');
+
+        config.__retryCount = config.__retryCount || 0;
+        if (shouldRetry && config.__retryCount < MAX_RETRIES) {
+            config.__retryCount += 1;
+            await wait(400 * config.__retryCount);
+            return api(config);
+        }
+
         return Promise.reject(error);
     }
 );

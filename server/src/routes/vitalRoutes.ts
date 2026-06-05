@@ -17,15 +17,12 @@ const vitalSchema = z.object({
 router.get('/', requireAuth, async (req: AuthRequest, res) => {
     try {
         const userId = req.user.id;
-        console.log('Getting vitals for user:', userId);
 
         const { data, error } = await supabase
             .from('vital_records')
             .select('*')
             .eq('user_id', userId)
             .order('recorded_at', { ascending: false });
-
-        console.log('Supabase response:', { data, error });
 
         if (error) throw error;
 

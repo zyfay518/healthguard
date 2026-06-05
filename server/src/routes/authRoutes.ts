@@ -26,6 +26,10 @@ router.get('/profile', requireAuth, async (req: AuthRequest, res) => {
             .eq('id', userId)
             .single();
 
+        if (error?.code === 'PGRST116') {
+            return res.json({});
+        }
+
         if (error) throw error;
 
         res.json(data);
@@ -42,8 +46,7 @@ router.put('/profile', requireAuth, async (req: AuthRequest, res) => {
 
         const { data, error } = await supabase
             .from('profiles')
-            .update(validatedData)
-            .eq('id', userId)
+            .upsert({ id: userId, ...validatedData }, { onConflict: 'id' })
             .select();
 
         if (error) throw error;
