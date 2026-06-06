@@ -20,6 +20,21 @@ const defaultHealthGoals: HealthGoals = {
   heartRateMax: 100,
 };
 
+const getCurrentYear = () => new Date().getFullYear();
+const getCurrentMonth = () => new Date().getMonth() + 1;
+
+const calculateAgeFromBirthMonth = (year: number, month: number) => {
+  const today = new Date();
+  let nextAge = today.getFullYear() - year;
+  if (today.getMonth() + 1 < month) nextAge -= 1;
+  return Math.max(0, nextAge);
+};
+
+const deriveBirthMonthFromAge = (age: number) => ({
+  year: getCurrentYear() - age,
+  month: getCurrentMonth(),
+});
+
 const Profile: React.FC = () => {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<any>(null);
@@ -28,6 +43,8 @@ const Profile: React.FC = () => {
   // Form state
   const [gender, setGender] = useState('female');
   const [age, setAge] = useState(28);
+  const [birthYear, setBirthYear] = useState(getCurrentYear() - 28);
+  const [birthMonth, setBirthMonth] = useState(getCurrentMonth());
   const [height, setHeight] = useState(165);
   const [weight, setWeight] = useState(61);
   const [fullName, setFullName] = useState('');
@@ -64,7 +81,17 @@ const Profile: React.FC = () => {
           setProfile(data);
           setFullName(data.full_name || '');
           if (data.gender) setGender(data.gender);
-          if (data.age) setAge(data.age);
+          const nextAge = data.age || 28;
+          setAge(nextAge);
+          if (data.birth_year && data.birth_month) {
+            setBirthYear(data.birth_year);
+            setBirthMonth(data.birth_month);
+            setAge(calculateAgeFromBirthMonth(data.birth_year, data.birth_month));
+          } else {
+            const inferred = deriveBirthMonthFromAge(nextAge);
+            setBirthYear(inferred.year);
+            setBirthMonth(inferred.month);
+          }
           if (data.height) setHeight(data.height);
           if (data.weight) setWeight(data.weight);
           if (data.avatar_url) setAvatarUrl(data.avatar_url);
@@ -80,7 +107,17 @@ const Profile: React.FC = () => {
         setProfile(data);
         setFullName(data.full_name || '');
         if (data.gender) setGender(data.gender);
-        if (data.age) setAge(data.age);
+        const nextAge = data.age || 28;
+        setAge(nextAge);
+        if (data.birth_year && data.birth_month) {
+          setBirthYear(data.birth_year);
+          setBirthMonth(data.birth_month);
+          setAge(calculateAgeFromBirthMonth(data.birth_year, data.birth_month));
+        } else {
+          const inferred = deriveBirthMonthFromAge(nextAge);
+          setBirthYear(inferred.year);
+          setBirthMonth(inferred.month);
+        }
         if (data.height) setHeight(data.height);
         if (data.weight) setWeight(data.weight);
         if (data.avatar_url) setAvatarUrl(data.avatar_url);
@@ -165,6 +202,39 @@ const Profile: React.FC = () => {
         if (Object.keys(rest).length > 0) {
           await profileService.update(rest);
           await loadProfile();
+        }
+      } else {
+        alert('保存失败，请检查网络或重试。');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveBirthMonth = async () => {
+    const nextAge = calculateAgeFromBirthMonth(birthYear, birthMonth);
+    setAge(nextAge);
+    setIsSaving(true);
+    try {
+      await profileService.update({
+        birth_year: birthYear,
+        birth_month: birthMonth,
+        age: nextAge,
+      });
+      localStorage.removeItem('healthguard_profile_cache');
+      await loadProfile();
+      setEditingField(null);
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.error || error.message || '';
+      if (errorMsg.includes('birth_year') || errorMsg.includes('birth_month') || errorMsg.includes('column')) {
+        try {
+          await profileService.update({ age: nextAge });
+          localStorage.removeItem('healthguard_profile_cache');
+          await loadProfile();
+          setEditingField(null);
+          alert('年龄已保存。上线前执行 birth_month SQL 后，可同步出生年月。');
+        } catch {
+          alert('保存失败，请检查网络或重试。');
         }
       } else {
         alert('保存失败，请检查网络或重试。');
@@ -385,18 +455,36 @@ const Profile: React.FC = () => {
                     </div>
                   )}
                   {editingField === 'age' && (
-                    <div className="flex items-center gap-2 w-full overflow-hidden">
-                      <input
-                        type="number"
-                        autoFocus
-                        className="flex-1 min-w-0 bg-gray-50 dark:bg-white/5 rounded-xl p-2 text-center font-bold text-lg outline-none border-2 border-transparent focus:border-primary"
-                        value={age}
-                        onChange={(e) => setAge(parseInt(e.target.value))}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSaveField({ age })}
-                      />
-                      <button onClick={() => handleSaveField({ age })} className="flex-shrink-0 bg-primary text-white p-2 rounded-xl shadow-lg shadow-primary/20">
-                        <span className="material-symbols-outlined">check</span>
-                      </button>
+                    <div className="flex flex-col gap-3 w-full">
+                      <div className="grid grid-cols-[1fr_0.7fr_auto] gap-2 items-center">
+                        <select
+                          autoFocus
+                          className="min-w-0 bg-gray-50 dark:bg-white/5 rounded-xl p-2 text-center font-bold text-base outline-none border-2 border-transparent focus:border-primary"
+                          value={birthYear}
+                          onChange={(e) => setBirthYear(Number(e.target.value))}
+                        >
+                          {Array.from({ length: 101 }).map((_, index) => {
+                            const year = getCurrentYear() - index;
+                            return <option key={year} value={year}>{year}年</option>;
+                          })}
+                        </select>
+                        <select
+                          className="min-w-0 bg-gray-50 dark:bg-white/5 rounded-xl p-2 text-center font-bold text-base outline-none border-2 border-transparent focus:border-primary"
+                          value={birthMonth}
+                          onChange={(e) => setBirthMonth(Number(e.target.value))}
+                        >
+                          {Array.from({ length: 12 }).map((_, index) => {
+                            const month = index + 1;
+                            return <option key={month} value={month}>{month}月</option>;
+                          })}
+                        </select>
+                        <button onClick={handleSaveBirthMonth} className="flex-shrink-0 bg-primary text-white p-2 rounded-xl shadow-lg shadow-primary/20">
+                          <span className="material-symbols-outlined">check</span>
+                        </button>
+                      </div>
+                      <p className="text-center text-xs text-gray-400">
+                        将显示为 {calculateAgeFromBirthMonth(birthYear, birthMonth)} 岁
+                      </p>
                     </div>
                   )}
                   {editingField === 'height' && (

@@ -9,6 +9,8 @@ const router = express.Router();
 const profileSchema = z.object({
     full_name: z.string().optional(),
     age: z.number().int().optional(),
+    birth_year: z.number().int().optional(),
+    birth_month: z.number().int().min(1).max(12).optional(),
     gender: z.string().optional(),
     height: z.number().optional(),
     weight: z.number().optional(),
