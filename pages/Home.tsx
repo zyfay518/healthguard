@@ -153,7 +153,7 @@ const Home: React.FC = () => {
 
       const publicKey = await notificationService.getVapidPublicKey();
       if (!publicKey) {
-        alert('后端还没有配置推送公钥，暂时无法开启通知。');
+        alert('通知服务正在配置中，暂时无法开启。请稍后再试。');
         return;
       }
 
