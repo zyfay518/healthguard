@@ -34,6 +34,16 @@ function formatError(error, fallback = 'Internal server error') {
     }
 }
 
+function errorPayload(error, fallback = 'Internal server error') {
+    const payload = { error: formatError(error, fallback) };
+    if (error?.code) payload.code = error.code;
+    if (error?.details) payload.details = error.details;
+    if (error?.hint) payload.hint = error.hint;
+    if (error?.status) payload.status = error.status;
+    if (error?.statusCode) payload.statusCode = error.statusCode;
+    return payload;
+}
+
 function isAuthorizedCron(req) {
     if (!cronSecret) return true;
     return req.headers['x-cron-secret'] === cronSecret ||
@@ -197,13 +207,13 @@ async function getUser(req) {
         // Supabase v1 uses auth.api.getUser(token)
         const { data: user, error } = await supabase.auth.api.getUser(token);
         if (error || !user) {
-            console.log('Auth error:', error?.message);
-            return null;
+            console.log('Auth error:', formatError(error, 'Unable to verify user'));
+            return { user: null, error: error || new Error('Unable to verify user') };
         }
-        return user;
+        return { user, error: null };
     } catch (err) {
-        console.log('Auth exception:', err.message);
-        return null;
+        console.log('Auth exception:', formatError(err, 'Unable to verify user'));
+        return { user: null, error: err };
     }
 }
 
@@ -219,44 +229,40 @@ export default async function handler(req, res) {
         return;
     }
 
-    // Check Supabase initialization
-    if (!supabase) {
-        return json(res, 500, { error: 'Server not configured. Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.' });
-    }
-
-    const url = req.url || '';
-    const method = req.method || 'GET';
-
-    // Route: Health check
-    if (url === '/api' || url === '/api/') {
-        return json(res, 200, { status: 'HealthGuard API is running' });
-    }
-
-    if (url.startsWith('/api/notifications/vapid-public-key') && method === 'GET') {
-        return json(res, 200, { publicKey: vapidPublicKey });
-    }
-
-    if (url.startsWith('/api/notifications/check-due') && ['GET', 'POST'].includes(method)) {
-        if (!isAuthorizedCron(req)) {
-            return json(res, 401, { error: 'Unauthorized' });
+    try {
+        // Check Supabase initialization
+        if (!supabase) {
+            return json(res, 500, { error: 'Server not configured. Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.' });
         }
 
-        try {
+        const url = req.url || '';
+        const method = req.method || 'GET';
+
+        // Route: Health check
+        if (url === '/api' || url === '/api/') {
+            return json(res, 200, { status: 'HealthGuard API is running' });
+        }
+
+        if (url.startsWith('/api/notifications/vapid-public-key') && method === 'GET') {
+            return json(res, 200, { publicKey: vapidPublicKey });
+        }
+
+        if (url.startsWith('/api/notifications/check-due') && ['GET', 'POST'].includes(method)) {
+            if (!isAuthorizedCron(req)) {
+                return json(res, 401, { error: 'Unauthorized' });
+            }
+
             const sent = await checkDueNotifications();
             return json(res, 200, { success: true, sent });
-        } catch (err) {
-            console.error('Notification check failed:', err);
-            return json(res, 500, { error: formatError(err, 'Notification check failed') });
         }
-    }
 
-    // Auth required for all other routes
-    const user = await getUser(req);
-    if (!user) {
-        return json(res, 401, { error: 'Unauthorized' });
-    }
+        // Auth required for all other routes
+        const auth = await getUser(req);
+        if (!auth.user) {
+            return json(res, 401, errorPayload(auth.error, 'Unauthorized'));
+        }
+        const user = auth.user;
 
-    try {
         // === VITALS ===
         if (url.startsWith('/api/notifications')) {
             if (url.startsWith('/api/notifications/subscribe') && method === 'POST') {
@@ -449,6 +455,6 @@ export default async function handler(req, res) {
 
     } catch (err) {
         console.error('API Error:', err);
-        return json(res, 500, { error: formatError(err) });
+        return json(res, 500, errorPayload(err));
     }
 }
