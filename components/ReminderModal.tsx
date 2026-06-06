@@ -5,12 +5,24 @@ interface ReminderModalProps {
     onClose: () => void;
     isEnabled: boolean;
     isSaving: boolean;
+    permissionStatus: NotificationPermission | 'unsupported';
+    setupMessage?: string;
     onEnable: () => void;
     onDisable: () => void;
 }
 
-const ReminderModal: React.FC<ReminderModalProps> = ({ isOpen, onClose, isEnabled, isSaving, onEnable, onDisable }) => {
+const ReminderModal: React.FC<ReminderModalProps> = ({ isOpen, onClose, isEnabled, isSaving, permissionStatus, setupMessage, onEnable, onDisable }) => {
     if (!isOpen) return null;
+
+    const permissionDenied = permissionStatus === 'denied';
+    const unsupported = permissionStatus === 'unsupported';
+    const primaryLabel = isEnabled
+        ? '智能提醒已开启'
+        : isSaving
+            ? '正在开启...'
+            : permissionDenied
+                ? '我已开启，重新检测'
+                : '开启智能提醒';
 
     return (
         <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm transition-opacity animate-in fade-in duration-300">
@@ -28,24 +40,35 @@ const ReminderModal: React.FC<ReminderModalProps> = ({ isOpen, onClose, isEnable
                 </div>
 
                 <div className="bg-gray-50 dark:bg-white/5 rounded-[24px] p-5 border border-gray-100 dark:border-white/5 mb-6">
-                    <div className="size-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-4">
-                        <span className="material-symbols-outlined text-[30px]">notifications_active</span>
+                    <div className={`size-14 rounded-2xl flex items-center justify-center mx-auto mb-4 ${permissionDenied ? 'bg-orange-50 text-orange-500 dark:bg-orange-900/20' : unsupported ? 'bg-gray-100 text-gray-400 dark:bg-white/5' : 'bg-primary/10 text-primary'}`}>
+                        <span className="material-symbols-outlined text-[30px]">{permissionDenied ? 'notifications_off' : 'notifications_active'}</span>
                     </div>
                     <p className="text-sm text-gray-600 dark:text-gray-300 text-center leading-relaxed">
-                        开启后，我们会根据您最近几天的记录习惯，在常用记录时间过后仍未打卡时发送提醒。
+                        {permissionDenied
+                            ? '当前设备已关闭通知权限，需要先在系统设置里允许通知。'
+                            : unsupported
+                                ? '当前浏览器暂不支持推送通知。'
+                                : '开启后，我们会根据您最近几天的记录习惯，在常用记录时间过后仍未打卡时发送提醒。'}
                     </p>
                     <p className="mt-3 text-xs text-gray-400 text-center leading-relaxed">
-                        iOS/Android 需要通过主屏幕图标打开应用，并允许通知权限。
+                        {permissionDenied
+                            ? 'iPhone：设置 → 通知 → 找到此应用 → 打开允许通知。Android：长按应用图标 → 应用信息 → 通知。'
+                            : 'iOS/Android 需要通过主屏幕图标打开应用，并允许通知权限。'}
                     </p>
+                    {setupMessage && (
+                        <p className="mt-3 text-xs text-orange-500 dark:text-orange-300 text-center leading-relaxed">
+                            {setupMessage}
+                        </p>
+                    )}
                 </div>
 
                 <div className="flex flex-col gap-3">
                     <button
                         onClick={onEnable}
-                        disabled={isSaving || isEnabled}
+                        disabled={isSaving || isEnabled || unsupported}
                         className="w-full bg-primary hover:bg-primary/90 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed text-white font-bold text-lg h-14 rounded-2xl shadow-lg shadow-primary/20 active:scale-[0.98] transition-all"
                     >
-                        {isEnabled ? '智能提醒已开启' : isSaving ? '正在开启...' : '开启智能提醒'}
+                        {primaryLabel}
                     </button>
                     <button
                         onClick={onDisable}

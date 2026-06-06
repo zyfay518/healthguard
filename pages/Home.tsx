@@ -64,6 +64,8 @@ const Home: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [smartReminderEnabled, setSmartReminderEnabled] = useState(false);
   const [savingReminder, setSavingReminder] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [notificationSetupMessage, setNotificationSetupMessage] = useState('');
 
   // Profile state for avatar and name
   const [profile, setProfile] = useState<{ avatar_url?: string; full_name?: string } | null>(null);
@@ -74,6 +76,7 @@ const Home: React.FC = () => {
     loadSymptoms();
     loadProfile();
     setSmartReminderEnabled(localStorage.getItem('healthguard_smart_reminder') === 'enabled');
+    setNotificationPermission('Notification' in window ? Notification.permission : 'unsupported');
   }, []);
 
   // Load profile with caching (5 minutes)
@@ -138,22 +141,29 @@ const Home: React.FC = () => {
   };
 
   const handleEnableReminder = async () => {
+    setNotificationSetupMessage('');
+
     if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
-      alert('当前浏览器暂不支持推送通知。iOS/Android 请先将应用添加到主屏幕，再从主屏幕图标打开。');
+      setNotificationPermission('unsupported');
+      setNotificationSetupMessage('请先将应用添加到主屏幕，并从主屏幕图标打开后再试。');
       return;
     }
 
     setSavingReminder(true);
     try {
-      const permission = await Notification.requestPermission();
+      const permission = Notification.permission === 'default'
+        ? await Notification.requestPermission()
+        : Notification.permission;
+      setNotificationPermission(permission);
+
       if (permission !== 'granted') {
-        alert('通知权限没有开启。请在系统或浏览器设置里允许通知后再试。');
+        setNotificationSetupMessage('如果刚刚点了“不允许”，系统不会再次自动弹出授权框，需要手动去设置里打开。');
         return;
       }
 
       const publicKey = await notificationService.getVapidPublicKey();
       if (!publicKey) {
-        alert('通知服务正在配置中，暂时无法开启。请稍后再试。');
+        setNotificationSetupMessage('通知服务正在配置中，暂时无法开启。请稍后再试。');
         return;
       }
 
@@ -169,13 +179,18 @@ const Home: React.FC = () => {
       localStorage.removeItem('healthguard_reminder');
       setSmartReminderEnabled(true);
       setShowNotificationModal(false);
-      alert('智能提醒已开启。我们会根据您最近的记录习惯，在可能漏记时提醒您。');
     } catch (error) {
       console.error('Failed to enable push reminder', error);
-      alert('开启提醒失败，请稍后重试。');
+      setNotificationSetupMessage('开启提醒失败，请稍后重试。');
     } finally {
       setSavingReminder(false);
     }
+  };
+
+  const openNotificationModal = () => {
+    setNotificationPermission('Notification' in window ? Notification.permission : 'unsupported');
+    setNotificationSetupMessage('');
+    setShowNotificationModal(true);
   };
 
   const handleDisableReminder = async () => {
@@ -337,7 +352,7 @@ const Home: React.FC = () => {
             </div>
           </div>
           <button
-            onClick={() => setShowNotificationModal(true)}
+            onClick={openNotificationModal}
             className={`flex items-center justify-center rounded-full size-10 bg-white dark:bg-[#2a1d36] shadow-sm transition-colors ${smartReminderEnabled ? 'text-green-600 hover:bg-green-50 dark:hover:bg-green-500/10' : 'text-primary hover:bg-primary/5'}`}
           >
             <span className="material-symbols-outlined">{smartReminderEnabled ? 'notifications_active' : 'notifications'}</span>
@@ -587,6 +602,8 @@ const Home: React.FC = () => {
         onClose={() => setShowNotificationModal(false)}
         isEnabled={smartReminderEnabled}
         isSaving={savingReminder}
+        permissionStatus={notificationPermission}
+        setupMessage={notificationSetupMessage}
         onEnable={handleEnableReminder}
         onDisable={handleDisableReminder}
       />
