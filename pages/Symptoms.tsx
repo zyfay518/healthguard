@@ -95,7 +95,8 @@ const Symptoms: React.FC = () => {
       navigate(`/record?date=${dateStr}&hour=${hour}&minute=${minute}`);
     } catch (error) {
       console.error('Failed to save symptoms', error);
-      alert('保存失败，请重试。');
+      const message = (error as any)?.response?.data?.error || (error as any)?.message || '请重试';
+      alert(`保存失败：${message}`);
     } finally {
       setIsSaving(false);
     }

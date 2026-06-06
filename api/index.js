@@ -342,9 +342,10 @@ export default async function handler(req, res) {
             }
             if (method === 'POST') {
                 const body = await parseBody(req);
+                const symptomTime = body.recorded_at || body.created_at || new Date().toISOString();
                 const { data, error } = await supabase
                     .from('symptom_logs')
-                    .insert([{ user_id: user.id, symptoms: body.symptoms, note: body.note, created_at: body.created_at || new Date().toISOString() }])
+                    .insert([{ user_id: user.id, symptoms: body.symptoms, note: body.note, created_at: symptomTime }])
                     .select();
                 if (error) throw error;
                 return json(res, 200, data[0]);

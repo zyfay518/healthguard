@@ -150,6 +150,19 @@ const Profile: React.FC = () => {
     }));
   };
 
+  const mergeProfileState = (fields: any) => {
+    setProfile((prev: any) => ({ ...(prev || {}), ...fields }));
+    if (typeof fields.full_name === 'string') setFullName(fields.full_name);
+    if (fields.gender) setGender(fields.gender);
+    if (typeof fields.age === 'number') setAge(fields.age);
+    if (typeof fields.birth_year === 'number') setBirthYear(fields.birth_year);
+    if (typeof fields.birth_month === 'number') setBirthMonth(fields.birth_month);
+    if (typeof fields.height === 'number') setHeight(fields.height);
+    if (typeof fields.weight === 'number') setWeight(fields.weight);
+    if (fields.avatar_url) setAvatarUrl(fields.avatar_url);
+    localStorage.removeItem('healthguard_profile_cache');
+  };
+
   const handleSaveGoals = async () => {
     const normalizedGoals = {
       bpSystolic: Math.round(goalDraft.bpSystolic),
@@ -185,10 +198,7 @@ const Profile: React.FC = () => {
     setIsSaving(true);
     try {
       await profileService.update(fields);
-      // Clear Home page cache so it refreshes on next visit
-      localStorage.removeItem('healthguard_profile_cache');
-      // Update local state without full reload if possible, or just reload
-      await loadProfile();
+      mergeProfileState(fields);
       setIsEditingName(false);
       setEditingField(null);
     } catch (error: any) {
@@ -201,7 +211,9 @@ const Profile: React.FC = () => {
         const { avatar_url, ...rest } = fields;
         if (Object.keys(rest).length > 0) {
           await profileService.update(rest);
-          await loadProfile();
+          mergeProfileState(rest);
+          setIsEditingName(false);
+          setEditingField(null);
         }
       } else {
         alert('保存失败，请检查网络或重试。');
@@ -221,16 +233,14 @@ const Profile: React.FC = () => {
         birth_month: birthMonth,
         age: nextAge,
       });
-      localStorage.removeItem('healthguard_profile_cache');
-      await loadProfile();
+      mergeProfileState({ birth_year: birthYear, birth_month: birthMonth, age: nextAge });
       setEditingField(null);
     } catch (error: any) {
       const errorMsg = error.response?.data?.error || error.message || '';
       if (errorMsg.includes('birth_year') || errorMsg.includes('birth_month') || errorMsg.includes('column')) {
         try {
           await profileService.update({ age: nextAge });
-          localStorage.removeItem('healthguard_profile_cache');
-          await loadProfile();
+          mergeProfileState({ age: nextAge });
           setEditingField(null);
           alert('年龄已保存。上线前执行 birth_month SQL 后，可同步出生年月。');
         } catch {
