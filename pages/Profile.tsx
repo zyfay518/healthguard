@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { profileService } from '../services/api';
+import { getApiErrorMessage, profileService } from '../services/api';
 
 type HealthGoals = {
   bpSystolic: number;
@@ -182,12 +182,12 @@ const Profile: React.FC = () => {
       localStorage.removeItem('healthguard_profile_cache');
       setIsEditingGoals(false);
     } catch (error: any) {
-      const message = error.response?.data?.error || error.message || '';
+      const message = getApiErrorMessage(error, '');
       if (message.includes('health_goals') || message.includes('column')) {
         setIsEditingGoals(false);
         alert('目标已保存在本机。上线前执行 health_goals SQL 后，可同步到账号。');
       } else {
-        alert('保存失败，请重试。');
+        alert(`保存失败：${getApiErrorMessage(error)}`);
       }
     } finally {
       setIsSaving(false);
@@ -204,7 +204,7 @@ const Profile: React.FC = () => {
     } catch (error: any) {
       console.error('Failed to update profile:', error);
       // Check if the error is about a missing column (like avatar_url)
-      const errorMsg = error.response?.data?.error || '';
+      const errorMsg = getApiErrorMessage(error, '');
       if (errorMsg.includes('column') && errorMsg.includes('avatar_url')) {
         alert('系统升级中：头像存储功能暂不可用，已为您保存其他资料。');
         // Try saving again without avatar_url
@@ -216,7 +216,7 @@ const Profile: React.FC = () => {
           setEditingField(null);
         }
       } else {
-        alert('保存失败，请检查网络或重试。');
+        alert(`保存失败：${getApiErrorMessage(error, '请检查网络或重试。')}`);
       }
     } finally {
       setIsSaving(false);
@@ -236,18 +236,18 @@ const Profile: React.FC = () => {
       mergeProfileState({ birth_year: birthYear, birth_month: birthMonth, age: nextAge });
       setEditingField(null);
     } catch (error: any) {
-      const errorMsg = error.response?.data?.error || error.message || '';
+      const errorMsg = getApiErrorMessage(error, '');
       if (errorMsg.includes('birth_year') || errorMsg.includes('birth_month') || errorMsg.includes('column')) {
         try {
           await profileService.update({ age: nextAge });
           mergeProfileState({ age: nextAge });
           setEditingField(null);
           alert('年龄已保存。上线前执行 birth_month SQL 后，可同步出生年月。');
-        } catch {
-          alert('保存失败，请检查网络或重试。');
+        } catch (fallbackError) {
+          alert(`保存失败：${getApiErrorMessage(fallbackError, '请检查网络或重试。')}`);
         }
       } else {
-        alert('保存失败，请检查网络或重试。');
+        alert(`保存失败：${getApiErrorMessage(error, '请检查网络或重试。')}`);
       }
     } finally {
       setIsSaving(false);
@@ -305,7 +305,7 @@ const Profile: React.FC = () => {
 
     } catch (error: any) {
       console.error('Avatar upload failed:', error);
-      alert('头像上传失败：' + (error.message || '请检查网络'));
+      alert('头像上传失败：' + getApiErrorMessage(error, '请检查网络'));
     } finally {
       setIsSaving(false);
     }

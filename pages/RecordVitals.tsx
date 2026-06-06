@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { glucoseService, vitalService } from '../services/api';
+import { getApiErrorMessage, glucoseService, vitalService } from '../services/api';
 import type { GlucoseContext, PostMealTiming } from '../utils/dataAggregation';
 
 const RecordVitals: React.FC = () => {
@@ -135,7 +135,7 @@ const RecordVitals: React.FC = () => {
       navigate('/');
     } catch (error) {
       console.error('Failed to save vitals', error);
-      alert('保存失败，请重试。');
+      alert(`保存失败：${getApiErrorMessage(error)}`);
     } finally {
       setIsSaving(false);
     }

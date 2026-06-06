@@ -19,6 +19,21 @@ if (vapidPublicKey && vapidPrivateKey) {
     webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 }
 
+function formatError(error, fallback = 'Internal server error') {
+    if (!error) return fallback;
+    if (typeof error === 'string') return error;
+    if (typeof error === 'number' || typeof error === 'boolean') return String(error);
+    if (typeof error.message === 'string') return error.message;
+    if (error.message) return formatError(error.message, fallback);
+    if (typeof error.error === 'string') return error.error;
+    if (error.error) return formatError(error.error, fallback);
+    try {
+        return JSON.stringify(error);
+    } catch {
+        return fallback;
+    }
+}
+
 function isAuthorizedCron(req) {
     if (!cronSecret) return true;
     return req.headers['x-cron-secret'] === cronSecret ||
@@ -231,7 +246,7 @@ export default async function handler(req, res) {
             return json(res, 200, { success: true, sent });
         } catch (err) {
             console.error('Notification check failed:', err);
-            return json(res, 500, { error: err.message || 'Notification check failed' });
+            return json(res, 500, { error: formatError(err, 'Notification check failed') });
         }
     }
 
@@ -434,6 +449,6 @@ export default async function handler(req, res) {
 
     } catch (err) {
         console.error('API Error:', err);
-        return json(res, 500, { error: err.message || 'Internal server error' });
+        return json(res, 500, { error: formatError(err) });
     }
 }

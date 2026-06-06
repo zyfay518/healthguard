@@ -11,6 +11,32 @@ const MAX_RETRIES = 2;
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const stringifyErrorValue = (value: any): string => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (typeof value.message === 'string') return value.message;
+    if (value.message) return stringifyErrorValue(value.message);
+    if (typeof value.error === 'string') return value.error;
+    if (value.error) return stringifyErrorValue(value.error);
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
+};
+
+export const getApiErrorMessage = (error: any, fallback = '请重试'): string => {
+    const message = stringifyErrorValue(
+        error?.response?.data?.error ??
+        error?.response?.data?.message ??
+        error?.response?.data ??
+        error?.message ??
+        error
+    );
+    return message || fallback;
+};
+
 // Interceptor to add auth token
 api.interceptors.request.use(async (config) => {
     const session = supabase.auth.session();

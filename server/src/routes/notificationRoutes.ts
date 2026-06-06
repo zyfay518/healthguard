@@ -3,6 +3,7 @@ import webpush from 'web-push';
 import { z } from 'zod';
 import { supabase } from '../supabaseClient';
 import { requireAuth, AuthRequest } from '../middleware/authMiddleware';
+import { formatError } from '../utils/errors';
 
 const router = express.Router();
 
@@ -91,7 +92,7 @@ router.post('/subscribe', requireAuth, async (req: AuthRequest, res) => {
         if (error) throw error;
         res.json({ success: true });
     } catch (error: any) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({ error: formatError(error) });
     }
 });
 
@@ -110,7 +111,7 @@ router.post('/unsubscribe', requireAuth, async (req: AuthRequest, res) => {
         if (error) throw error;
         res.json({ success: true });
     } catch (error: any) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({ error: formatError(error) });
     }
 });
 
@@ -195,7 +196,7 @@ router.all('/check-due', async (req, res) => {
 
         res.json({ success: true, sent });
     } catch (error: any) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({ error: formatError(error) });
     }
 });
 

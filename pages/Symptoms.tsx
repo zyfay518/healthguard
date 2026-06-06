@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { symptomService } from '../services/api';
+import { getApiErrorMessage, symptomService } from '../services/api';
 
 const symptomsList = [
   { id: '1', name: '感觉良好', icon: 'sentiment_satisfied', color: 'green' },
@@ -95,8 +95,7 @@ const Symptoms: React.FC = () => {
       navigate(`/record?date=${dateStr}&hour=${hour}&minute=${minute}`);
     } catch (error) {
       console.error('Failed to save symptoms', error);
-      const message = (error as any)?.response?.data?.error || (error as any)?.message || '请重试';
-      alert(`保存失败：${message}`);
+      alert(`保存失败：${getApiErrorMessage(error)}`);
     } finally {
       setIsSaving(false);
     }

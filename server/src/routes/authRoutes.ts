@@ -2,6 +2,7 @@ import express from 'express';
 import { z } from 'zod';
 import { supabase } from '../supabaseClient';
 import { requireAuth, AuthRequest } from '../middleware/authMiddleware';
+import { formatError } from '../utils/errors';
 
 const router = express.Router();
 
@@ -44,7 +45,7 @@ router.get('/profile', requireAuth, async (req: AuthRequest, res) => {
 
         res.json(data);
     } catch (error: any) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({ error: formatError(error) });
     }
 });
 
@@ -63,7 +64,7 @@ router.put('/profile', requireAuth, async (req: AuthRequest, res) => {
 
         res.json(data[0]);
     } catch (error: any) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({ error: formatError(error) });
     }
 });
 
