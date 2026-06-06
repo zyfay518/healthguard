@@ -9,8 +9,7 @@ const BottomNav: React.FC = () => {
 
   const navItems = [
     { path: '/', icon: 'home', label: '首页' },
-    { path: '/trends', icon: 'show_chart', label: '趋势' }, // mapped to trends for demo
-    { path: '/export', icon: 'description', label: '报告' },
+    { path: '/trends', icon: 'show_chart', label: '趋势' },
     { path: '/profile', icon: 'person', label: '我的' },
   ];
 

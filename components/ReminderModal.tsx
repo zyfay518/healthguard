@@ -1,47 +1,15 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React from 'react';
 
 interface ReminderModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSave: (time: { hour: number; minute: number }) => void;
-    initialTime?: { hour: number; minute: number };
+    isEnabled: boolean;
+    isSaving: boolean;
+    onEnable: () => void;
+    onDisable: () => void;
 }
 
-const ReminderModal: React.FC<ReminderModalProps> = ({ isOpen, onClose, onSave, initialTime }) => {
-    const [selectedHour, setSelectedHour] = useState(initialTime?.hour || 8);
-    const [selectedMinute, setSelectedMinute] = useState(initialTime?.minute || 0);
-    const hourRef = useRef<HTMLDivElement>(null);
-    const minuteRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (isOpen) {
-            setTimeout(() => {
-                hourRef.current?.scrollTo({ top: selectedHour * 40, behavior: 'instant' });
-                minuteRef.current?.scrollTo({ top: selectedMinute * 40, behavior: 'instant' });
-            }, 100);
-        }
-    }, [isOpen]);
-
-    const handleScroll = (type: 'hour' | 'minute', ref: React.RefObject<HTMLDivElement>) => {
-        if (!ref.current) return;
-        const scrollTop = ref.current.scrollTop;
-        const index = Math.round(scrollTop / 40);
-        if (type === 'hour') {
-            if (index !== selectedHour && index >= 0 && index < 24) {
-                setSelectedHour(index);
-            }
-        } else {
-            if (index !== selectedMinute && index >= 0 && index < 60) {
-                setSelectedMinute(index);
-            }
-        }
-    };
-
-    const handleConfirm = () => {
-        onSave({ hour: selectedHour, minute: selectedMinute });
-        onClose();
-    };
-
+const ReminderModal: React.FC<ReminderModalProps> = ({ isOpen, onClose, isEnabled, isSaving, onEnable, onDisable }) => {
     if (!isOpen) return null;
 
     return (
@@ -53,82 +21,38 @@ const ReminderModal: React.FC<ReminderModalProps> = ({ isOpen, onClose, onSave, 
                 <div className="w-12 h-1.5 bg-gray-200 dark:bg-white/10 rounded-full mx-auto mb-6 sm:hidden"></div>
 
                 <div className="flex items-center justify-between mb-8">
-                    <h2 className="text-xl font-bold text-[#140c1d] dark:text-white">定时提醒设置</h2>
+                    <h2 className="text-xl font-bold text-[#140c1d] dark:text-white">智能提醒</h2>
                     <button onClick={onClose} className="size-10 flex items-center justify-center rounded-full bg-gray-100 dark:bg-white/5 text-gray-400">
                         <span className="material-symbols-outlined">close</span>
                     </button>
                 </div>
 
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-6 text-center">
-                    我们将每天在设定时间提醒您记录健康数据
-                </p>
-
-                <div className="bg-gray-50 dark:bg-white/5 rounded-[24px] h-48 relative overflow-hidden flex items-center justify-center border border-gray-100 dark:border-white/5 mb-8">
-                    <div className="absolute w-[80%] h-12 bg-white dark:bg-white/5 rounded-xl top-1/2 -translate-y-1/2 z-0 pointer-events-none border border-primary/20 shadow-sm"></div>
-
-                    {/* Hour Column */}
-                    <div
-                        ref={hourRef}
-                        onScroll={() => handleScroll('hour', hourRef)}
-                        className="flex-1 h-full overflow-y-auto snap-y snap-mandatory hide-scrollbar relative z-10"
-                        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                    >
-                        <div className="h-[80px]"></div>
-                        {Array.from({ length: 24 }, (_, i) => (
-                            <div
-                                key={i}
-                                onClick={() => hourRef.current?.scrollTo({ top: i * 40, behavior: 'smooth' })}
-                                className={`h-10 flex items-center justify-center text-xl snap-center cursor-pointer transition-all
-                  ${i === selectedHour ? 'text-2xl font-bold text-primary' : 'text-gray-400 dark:text-gray-500'}`}
-                            >
-                                {String(i).padStart(2, '0')}
-                            </div>
-                        ))}
-                        <div className="h-[80px]"></div>
+                <div className="bg-gray-50 dark:bg-white/5 rounded-[24px] p-5 border border-gray-100 dark:border-white/5 mb-6">
+                    <div className="size-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-4">
+                        <span className="material-symbols-outlined text-[30px]">notifications_active</span>
                     </div>
-
-                    <div className="text-2xl font-bold text-primary z-10">:</div>
-
-                    {/* Minute Column */}
-                    <div
-                        ref={minuteRef}
-                        onScroll={() => handleScroll('minute', minuteRef)}
-                        className="flex-1 h-full overflow-y-auto snap-y snap-mandatory hide-scrollbar relative z-10"
-                        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                    >
-                        <div className="h-[80px]"></div>
-                        {Array.from({ length: 60 }, (_, i) => (
-                            <div
-                                key={i}
-                                onClick={() => minuteRef.current?.scrollTo({ top: i * 40, behavior: 'smooth' })}
-                                className={`h-10 flex items-center justify-center text-xl snap-center cursor-pointer transition-all
-                  ${i === selectedMinute ? 'text-2xl font-bold text-primary' : 'text-gray-400 dark:text-gray-500'}`}
-                            >
-                                {String(i).padStart(2, '0')}
-                            </div>
-                        ))}
-                        <div className="h-[80px]"></div>
-                    </div>
-
-                    <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-gray-50 dark:from-[#1f122b] to-transparent z-20 pointer-events-none"></div>
-                    <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-gray-50 dark:from-[#1f122b] to-transparent z-20 pointer-events-none"></div>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 text-center leading-relaxed">
+                        开启后，我们会根据您最近几天的记录习惯，在常用记录时间过后仍未打卡时发送提醒。
+                    </p>
+                    <p className="mt-3 text-xs text-gray-400 text-center leading-relaxed">
+                        iOS/Android 需要通过主屏幕图标打开应用，并允许通知权限。
+                    </p>
                 </div>
 
                 <div className="flex flex-col gap-3">
                     <button
-                        onClick={handleConfirm}
-                        className="w-full bg-primary hover:bg-primary/90 text-white font-bold text-lg h-14 rounded-2xl shadow-lg shadow-primary/20 active:scale-[0.98] transition-all"
+                        onClick={onEnable}
+                        disabled={isSaving || isEnabled}
+                        className="w-full bg-primary hover:bg-primary/90 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed text-white font-bold text-lg h-14 rounded-2xl shadow-lg shadow-primary/20 active:scale-[0.98] transition-all"
                     >
-                        确认开启
+                        {isEnabled ? '智能提醒已开启' : isSaving ? '正在开启...' : '开启智能提醒'}
                     </button>
                     <button
-                        onClick={() => {
-                            localStorage.removeItem('healthguard_reminder');
-                            onClose();
-                        }}
-                        className="w-full bg-transparent text-red-500 font-medium text-sm h-10 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/5 transition-colors"
+                        onClick={onDisable}
+                        disabled={isSaving || !isEnabled}
+                        className="w-full bg-transparent text-red-500 disabled:text-gray-300 disabled:cursor-not-allowed font-medium text-sm h-10 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/5 transition-colors"
                     >
-                        关闭提醒
+                        {isSaving ? '正在处理...' : '关闭提醒'}
                     </button>
                 </div>
             </div>

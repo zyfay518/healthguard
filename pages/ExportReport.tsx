@@ -8,7 +8,6 @@ import { formatGlucoseContext } from '../utils/dataAggregation';
 const ExportReport: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [format, setFormat] = useState<'pdf' | 'excel'>('pdf');
   const [timeRange, setTimeRange] = useState<'7days' | '30days' | 'custom'>((searchParams.get('range') as any) || '30days');
 
   const [vitals, setVitals] = useState<any[]>([]);
@@ -176,69 +175,42 @@ const ExportReport: React.FC = () => {
 
       const fileName = `健康报告_${formatDateFull(dates.currentStart)}_至_${formatDateFull(dates.currentEnd)}`;
 
-      if (format === 'pdf') {
-        const printElement = document.getElementById('print-area');
-        if (!printElement) throw new Error('Print area not found');
+      const printElement = document.getElementById('print-area');
+      if (!printElement) throw new Error('Print area not found');
 
-        printElement.style.display = 'block';
+      printElement.style.display = 'block';
 
-        const canvas = await html2canvas(printElement, {
-          scale: 2,
-          useCORS: true,
-          logging: false,
-          backgroundColor: '#ffffff'
-        });
+      const canvas = await html2canvas(printElement, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff'
+      });
 
-        printElement.style.display = 'none';
+      printElement.style.display = 'none';
 
-        const imgData = canvas.toDataURL('image/png');
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
 
-        // At scale 2, we need to handle the canvas pixels correctly.
-        // A4 ratio is ~1.414.
-        const imgWidth = pdfWidth;
-        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const imgWidth = pdfWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-        let heightLeft = imgHeight;
-        let position = 0;
+      let heightLeft = imgHeight;
+      let position = 0;
 
-        // Add first page
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pdfHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
         pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
         heightLeft -= pdfHeight;
-
-        // Add more pages if content exceeds A4 height
-        while (heightLeft > 0) {
-          position = heightLeft - imgHeight;
-          pdf.addPage();
-          pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-          heightLeft -= pdfHeight;
-        }
-
-        pdf.save(`${fileName}.pdf`);
-      } else {
-        // CSV Generation with BOM
-        const headers = ['时间', '类型', '数值', '心率', '备注'];
-        const csvRows = [
-          headers.join(','),
-          ...allData.map(item => [
-            `"${item.time.toLocaleString('zh-CN')}"`,
-            `"${item.type}"`,
-            `"${item.value}"`,
-            `"${item.heartRate}"`,
-            `"${item.note}"`
-          ].join(','))
-        ];
-
-        const csvContent = "\uFEFF" + csvRows.join('\n');
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement("a");
-        const url = URL.createObjectURL(blob);
-        link.setAttribute("href", url);
-        link.setAttribute("download", `${fileName}.csv`);
-        link.click();
       }
+
+      pdf.save(`${fileName}.pdf`);
 
       setTimeout(() => {
         alert('报告已成功生成并尝试下载！');
@@ -386,41 +358,6 @@ const ExportReport: React.FC = () => {
           </div>
         </section>
 
-        <section>
-          <h2 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">导出格式</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <button
-              onClick={() => setFormat('pdf')}
-              className={`relative flex flex-col items-center gap-3 p-6 rounded-2xl ${format === 'pdf' ? 'bg-white dark:bg-[#231530] border-2 border-primary' : 'bg-white dark:bg-[#231530] border border-gray-100 dark:border-[#352345]'} shadow-sm active:scale-[0.98] transition-all`}
-            >
-              <div className="size-12 rounded-full bg-red-50 dark:bg-red-900/20 text-red-500 flex items-center justify-center mb-1">
-                <span className="material-symbols-outlined text-[28px]">picture_as_pdf</span>
-              </div>
-              <div className="text-center">
-                <span className="block font-bold text-[#140c1d] dark:text-white">PDF 文档</span>
-                <span className="text-xs text-gray-500 dark:text-gray-400 mt-1">适合打印与分享</span>
-              </div>
-              <div className={`absolute top-3 right-3 ${format === 'pdf' ? 'text-primary' : 'text-gray-200'}`}>
-                <span className="material-symbols-outlined text-[20px] fill-current">{format === 'pdf' ? 'check_circle' : 'radio_button_unchecked'}</span>
-              </div>
-            </button>
-            <button
-              onClick={() => setFormat('excel')}
-              className={`relative flex flex-col items-center gap-3 p-6 rounded-2xl ${format === 'excel' ? 'bg-white dark:bg-[#231530] border-2 border-primary' : 'bg-white dark:bg-[#231530] border border-gray-100 dark:border-[#352345]'} shadow-sm active:scale-[0.98] transition-all`}
-            >
-              <div className="size-12 rounded-full bg-green-50 dark:bg-green-900/20 text-green-600 flex items-center justify-center mb-1">
-                <span className="material-symbols-outlined text-[28px]">table_view</span>
-              </div>
-              <div className="text-center">
-                <span className="block font-bold text-[#140c1d] dark:text-white">Excel 表格</span>
-                <span className="text-xs text-gray-500 dark:text-gray-400 mt-1">适合数据分析</span>
-              </div>
-              <div className={`absolute top-3 right-3 ${format === 'excel' ? 'text-primary' : 'text-gray-200'}`}>
-                <span className="material-symbols-outlined text-[20px] fill-current">{format === 'excel' ? 'check_circle' : 'radio_button_unchecked'}</span>
-              </div>
-            </button>
-          </div>
-        </section>
       </main>
 
       <div className="fixed bottom-20 left-0 right-0 max-w-md mx-auto p-4 bg-white/90 dark:bg-[#1f122b]/90 backdrop-blur-md border-t border-gray-100 dark:border-[#352345] z-50">

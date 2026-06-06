@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine } from 'recharts';
+import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine, CartesianGrid, Legend } from 'recharts';
 import { glucoseService, vitalService, profileService } from '../services/api';
 import {
   GlucoseRecord,
@@ -17,6 +17,9 @@ import {
   getHRThresholds,
   formatGlucoseContext
 } from '../utils/dataAggregation';
+
+type ExportMetric = 'bp' | 'glucose' | 'heartRate';
+type ExportRange = 'current' | '7days' | '30days';
 
 const Trends: React.FC = () => {
   const navigate = useNavigate();
@@ -55,7 +58,17 @@ const Trends: React.FC = () => {
   const [selectedRecordKeys, setSelectedRecordKeys] = useState<string[]>([]);
   const [isDeleting, setIsDeleting] = useState(false);
   const [profile, setProfile] = useState<{ age?: number; gender?: string } | null>(null);
+  const [allVitals, setAllVitals] = useState<VitalRecord[]>([]);
   const [glucoseRecords, setGlucoseRecords] = useState<GlucoseRecord[]>([]);
+  const [allGlucoseRecords, setAllGlucoseRecords] = useState<GlucoseRecord[]>([]);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportRange, setExportRange] = useState<ExportRange>('current');
+  const [exportMetrics, setExportMetrics] = useState<Record<ExportMetric, boolean>>({
+    bp: true,
+    glucose: false,
+    heartRate: false,
+  });
 
   // Load vitals data on mount only
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -89,8 +102,9 @@ const Trends: React.FC = () => {
     if (!silent && !isInitialLoad) setLoading(true);
     try {
       const data = await vitalService.getAll();
+      setAllVitals(data || []);
       // Filter by date range
-      const filtered = data.filter((v: VitalRecord) => {
+      const filtered = (data || []).filter((v: VitalRecord) => {
         const recordDate = new Date(v.recorded_at);
         return recordDate >= dateRange.start && recordDate <= new Date(dateRange.end.getTime() + 86400000); // Include end date
       });
@@ -106,6 +120,7 @@ const Trends: React.FC = () => {
   const loadGlucose = async () => {
     try {
       const data = await glucoseService.getAll();
+      setAllGlucoseRecords(data || []);
       const filtered = (data || []).filter((record: GlucoseRecord) => {
         const recordDate = new Date(record.recorded_at);
         return recordDate >= dateRange.start && recordDate <= new Date(dateRange.end.getTime() + 86400000);
@@ -298,8 +313,123 @@ const Trends: React.FC = () => {
     }
   };
 
+  const getExportRangeDates = () => {
+    const end = new Date();
+    const start = new Date();
+
+    if (exportRange === 'current') {
+      return { start: new Date(dateRange.start), end: new Date(dateRange.end) };
+    }
+
+    start.setDate(end.getDate() - (exportRange === '7days' ? 6 : 29));
+    return { start, end };
+  };
+
+  const exportDateRange = useMemo(() => getExportRangeDates(), [exportRange, dateRange]);
+
+  const filterRecordsByRange = <T extends { recorded_at: string }>(records: T[]) => {
+    const start = new Date(exportDateRange.start);
+    const end = new Date(exportDateRange.end);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    return records.filter(record => {
+      const date = new Date(record.recorded_at);
+      return date >= start && date <= end;
+    });
+  };
+
+  const exportVitals = useMemo(() => filterRecordsByRange(allVitals), [allVitals, exportDateRange]);
+  const exportGlucose = useMemo(() => filterRecordsByRange(allGlucoseRecords), [allGlucoseRecords, exportDateRange]);
+
+  const exportBloodPressureData = useMemo(() => (
+    aggregateByDay(exportVitals).filter(item => item.systolic > 0 || item.diastolic > 0)
+  ), [exportVitals]);
+
+  const exportHeartRateData = useMemo(() => (
+    aggregateByDay(exportVitals).filter(item => item.heart_rate > 0)
+  ), [exportVitals]);
+
+  const exportGlucoseData = useMemo(() => aggregateGlucoseByDay(exportGlucose), [exportGlucose]);
+
+  const openExportModal = (metric: ExportMetric) => {
+    setExportMetrics({
+      bp: metric === 'bp',
+      glucose: metric === 'glucose',
+      heartRate: metric === 'heartRate',
+    });
+    setExportRange('current');
+    setShowExportModal(true);
+  };
+
+  const toggleExportMetric = (metric: ExportMetric) => {
+    setExportMetrics(prev => ({ ...prev, [metric]: !prev[metric] }));
+  };
+
+  const formatExportDate = (date: Date) => (
+    date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-')
+  );
+
+  const handleExportPdf = async () => {
+    if (!exportMetrics.bp && !exportMetrics.glucose && !exportMetrics.heartRate) {
+      alert('请至少选择一个要导出的指标。');
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const [{ jsPDF }, html2canvasModule] = await Promise.all([
+        import('jspdf'),
+        import('html2canvas'),
+      ]);
+      const html2canvas = html2canvasModule.default;
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const report = document.getElementById('trend-export-report');
+      if (!report) throw new Error('Report area not found');
+
+      const canvas = await html2canvas(report, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+      });
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pdfWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const imgData = canvas.toDataURL('image/png');
+
+      let heightLeft = imgHeight;
+      let position = 0;
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pdfHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pdfHeight;
+      }
+
+      pdf.save(`健康趋势报告_${formatExportDate(exportDateRange.start)}_至_${formatExportDate(exportDateRange.end)}.pdf`);
+      setShowExportModal(false);
+    } catch (error) {
+      console.error('Failed to export PDF:', error);
+      alert('生成 PDF 失败，请稍后重试。');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const dateDisplayText = formatDateRange(dateRange.start, dateRange.end);
   const isToday = isSameDay(dateRange.end, new Date());
+  const metricOptions: Array<{ key: ExportMetric; label: string; count: number; icon: string; color: string }> = [
+    { key: 'bp', label: '血压', count: exportBloodPressureData.length, icon: 'favorite', color: 'red' },
+    { key: 'glucose', label: '血糖', count: exportGlucose.length, icon: 'bloodtype', color: 'green' },
+    { key: 'heartRate', label: '心率', count: exportHeartRateData.length, icon: 'monitor_heart', color: 'blue' },
+  ];
 
   return (
     <div className="relative flex min-h-screen w-full flex-col pb-24 bg-background-light dark:bg-background-dark">
@@ -368,11 +498,13 @@ const Trends: React.FC = () => {
                   <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">mmHg (平均)</span>
                 </div>
               </div>
-              {!loading && bloodPressureChartData.length > 0 && (
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-600 bg-green-50 dark:bg-green-900/30 px-2 py-1 rounded-md self-end">
-                  <span className="material-symbols-outlined text-[14px]">check_circle</span> 正常
-                </span>
-              )}
+              <button
+                onClick={() => openExportModal('bp')}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-primary bg-primary/10 hover:bg-primary/15 px-2.5 py-1.5 rounded-lg self-start transition-colors"
+              >
+                <span className="material-symbols-outlined text-[14px]">ios_share</span>
+                导出图表与数据
+              </button>
             </div>
 
             <div className="relative w-full h-[180px] mt-2 select-none flex items-center justify-center">
@@ -428,7 +560,7 @@ const Trends: React.FC = () => {
 
           {/* Glucose Chart */}
           <div className="flex flex-col gap-4 bg-white dark:bg-[#231530] rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-[#352345] min-h-[220px] transition-all">
-            <div className="flex items-start justify-between">
+            <div className="flex items-start justify-between gap-3">
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2">
                   <div className="size-8 rounded-full bg-green-50 dark:bg-green-900/20 flex items-center justify-center text-green-500">
@@ -443,6 +575,13 @@ const Trends: React.FC = () => {
                   <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">mmol/L (平均)</span>
                 </div>
               </div>
+              <button
+                onClick={() => openExportModal('glucose')}
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-primary bg-primary/10 hover:bg-primary/15 px-2.5 py-1.5 rounded-lg transition-colors"
+              >
+                <span className="material-symbols-outlined text-[14px]">ios_share</span>
+                导出
+              </button>
             </div>
 
             <div className="relative w-full h-[140px] mt-2 select-none flex items-center justify-center">
@@ -478,7 +617,7 @@ const Trends: React.FC = () => {
 
           {/* HR Chart */}
           <div className="flex flex-col gap-4 bg-white dark:bg-[#231530] rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-[#352345] min-h-[220px] transition-all">
-            <div className="flex items-start justify-between">
+            <div className="flex items-start justify-between gap-3">
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2">
                   <div className="size-8 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center text-blue-500">
@@ -493,6 +632,13 @@ const Trends: React.FC = () => {
                   <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">bpm (平均)</span>
                 </div>
               </div>
+              <button
+                onClick={() => openExportModal('heartRate')}
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-primary bg-primary/10 hover:bg-primary/15 px-2.5 py-1.5 rounded-lg transition-colors"
+              >
+                <span className="material-symbols-outlined text-[14px]">ios_share</span>
+                导出
+              </button>
             </div>
 
             <div className="relative w-full h-[140px] mt-2 select-none flex items-center justify-center">
@@ -607,6 +753,236 @@ const Trends: React.FC = () => {
           </div>
         </section>
       </main>
+
+      {showExportModal && (
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4">
+          <div className="w-full max-w-md bg-background-light dark:bg-[#1f122b] rounded-t-[28px] sm:rounded-[28px] p-5 shadow-2xl">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-xl font-bold text-[#140c1d] dark:text-white">导出趋势报告</h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">PDF 将包含趋势图与原始数据表</p>
+              </div>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="size-10 rounded-full bg-white dark:bg-white/5 flex items-center justify-center text-gray-400"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              <section>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 mb-3">时间范围</h3>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { key: 'current' as const, label: '当前范围', sub: dateDisplayText },
+                    { key: '7days' as const, label: '最近 7 天', sub: '含今天' },
+                    { key: '30days' as const, label: '最近 30 天', sub: '含今天' },
+                  ].map(item => (
+                    <button
+                      key={item.key}
+                      onClick={() => setExportRange(item.key)}
+                      className={`h-20 rounded-xl border px-2 text-left transition-all ${exportRange === item.key ? 'bg-primary text-white border-primary shadow-md shadow-primary/20' : 'bg-white dark:bg-[#231530] border-gray-100 dark:border-[#352345] text-gray-700 dark:text-gray-200'}`}
+                    >
+                      <span className="block text-sm font-bold">{item.label}</span>
+                      <span className={`block text-[11px] mt-1 ${exportRange === item.key ? 'text-white/75' : 'text-gray-400'}`}>{item.sub}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 mb-3">导出指标</h3>
+                <div className="flex flex-col gap-2">
+                  {metricOptions.map(item => (
+                    <button
+                      key={item.key}
+                      onClick={() => toggleExportMetric(item.key)}
+                      className={`flex items-center justify-between rounded-xl border p-3 text-left transition-colors ${exportMetrics[item.key] ? 'border-primary/40 bg-primary/5' : 'border-gray-100 dark:border-[#352345] bg-white dark:bg-[#231530]'}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`size-9 rounded-lg flex items-center justify-center ${
+                          item.color === 'red' ? 'bg-red-50 text-red-500 dark:bg-red-900/20' :
+                          item.color === 'green' ? 'bg-green-50 text-green-500 dark:bg-green-900/20' :
+                          'bg-blue-50 text-blue-500 dark:bg-blue-900/20'
+                        }`}>
+                          <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
+                        </div>
+                        <div>
+                          <p className="font-bold text-[#140c1d] dark:text-white">{item.label}</p>
+                          <p className="text-xs text-gray-400">{item.count} 条趋势点/记录</p>
+                        </div>
+                      </div>
+                      <span className={`material-symbols-outlined ${exportMetrics[item.key] ? 'text-primary' : 'text-gray-300'}`}>
+                        {exportMetrics[item.key] ? 'check_box' : 'check_box_outline_blank'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            <button
+              onClick={handleExportPdf}
+              disabled={isExporting || (!exportMetrics.bp && !exportMetrics.glucose && !exportMetrics.heartRate)}
+              className="mt-6 w-full h-14 rounded-2xl bg-primary disabled:bg-gray-300 text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/20 active:scale-[0.98] transition-all"
+            >
+              <span className="material-symbols-outlined text-[20px]">{isExporting ? 'hourglass_empty' : 'picture_as_pdf'}</span>
+              {isExporting ? '正在生成...' : '生成 PDF'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div
+        id="trend-export-report"
+        style={{
+          position: 'fixed',
+          left: '-10000px',
+          top: 0,
+          width: '760px',
+          padding: '34px',
+          background: '#ffffff',
+          color: '#111827',
+          fontFamily: 'Arial, sans-serif',
+          zIndex: -1,
+        }}
+      >
+        <h1 style={{ fontSize: 26, margin: '0 0 8px', color: '#111827' }}>健康趋势报告</h1>
+        <p style={{ margin: '0 0 22px', color: '#6b7280', fontSize: 13, lineHeight: 1.6 }}>
+          报告周期：{formatExportDate(exportDateRange.start)} 至 {formatExportDate(exportDateRange.end)}<br />
+          生成时间：{new Date().toLocaleString('zh-CN')}<br />
+          说明：趋势图按日期聚合显示平均值，具体测量记录见每个图表下方的数据表。
+        </p>
+
+        {exportMetrics.bp && (
+          <section style={{ marginBottom: 34, breakInside: 'avoid' }}>
+            <h2 style={{ fontSize: 18, margin: '0 0 6px', color: '#991b1b' }}>血压趋势</h2>
+            <p style={{ margin: '0 0 10px', color: '#6b7280', fontSize: 12 }}>横轴：日期；纵轴：mmHg。紫色为收缩压，蓝色为舒张压；虚线为参考上限。</p>
+            <div style={{ height: 240, border: '1px solid #e5e7eb', borderRadius: 10, padding: 12 }}>
+              {exportBloodPressureData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={exportBloodPressureData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#6b7280' }} label={{ value: '日期', position: 'insideBottom', offset: -4 }} />
+                    <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} label={{ value: 'mmHg', angle: -90, position: 'insideLeft' }} />
+                    <Tooltip />
+                    <Legend />
+                    <Area name="收缩压" type="monotone" dataKey="systolic" stroke="#7b00ff" fill="#ede9fe" strokeWidth={2} dot={{ r: 2 }} />
+                    <Area name="舒张压" type="monotone" dataKey="diastolic" stroke="#38bdf8" fill="#e0f2fe" strokeWidth={2} dot={{ r: 2 }} />
+                    <ReferenceLine y={getBPThresholds(profile?.age, profile?.gender).systolic} stroke="#ef4444" strokeDasharray="3 3" label="收缩压参考线" />
+                    <ReferenceLine y={getBPThresholds(profile?.age, profile?.gender).diastolic} stroke="#f97316" strokeDasharray="3 3" label="舒张压参考线" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>该范围暂无血压记录</div>
+              )}
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: '#fef2f2' }}>
+                  <th style={{ border: '1px solid #e5e7eb', padding: 8, textAlign: 'left' }}>时间</th>
+                  <th style={{ border: '1px solid #e5e7eb', padding: 8, textAlign: 'left' }}>收缩压</th>
+                  <th style={{ border: '1px solid #e5e7eb', padding: 8, textAlign: 'left' }}>舒张压</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exportVitals.filter(v => v.systolic && v.diastolic).map(record => (
+                  <tr key={`bp-${record.id}`}>
+                    <td style={{ border: '1px solid #e5e7eb', padding: 8 }}>{new Date(record.recorded_at).toLocaleString('zh-CN')}</td>
+                    <td style={{ border: '1px solid #e5e7eb', padding: 8 }}>{record.systolic} mmHg</td>
+                    <td style={{ border: '1px solid #e5e7eb', padding: 8 }}>{record.diastolic} mmHg</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )}
+
+        {exportMetrics.glucose && (
+          <section style={{ marginBottom: 34, breakInside: 'avoid' }}>
+            <h2 style={{ fontSize: 18, margin: '0 0 6px', color: '#166534' }}>血糖趋势</h2>
+            <p style={{ margin: '0 0 10px', color: '#6b7280', fontSize: 12 }}>横轴：日期；纵轴：mmol/L。绿色折线为血糖平均值；虚线为常用参考范围提示。</p>
+            <div style={{ height: 230, border: '1px solid #e5e7eb', borderRadius: 10, padding: 12 }}>
+              {exportGlucoseData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={exportGlucoseData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#6b7280' }} label={{ value: '日期', position: 'insideBottom', offset: -4 }} />
+                    <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} label={{ value: 'mmol/L', angle: -90, position: 'insideLeft' }} />
+                    <Tooltip />
+                    <Legend />
+                    <Area name="血糖" type="monotone" dataKey="value" stroke="#22c55e" fill="#dcfce7" strokeWidth={2} dot={{ r: 2 }} />
+                    <ReferenceLine y={7.2} stroke="#f97316" strokeDasharray="3 3" label="餐前参考上限" />
+                    <ReferenceLine y={4.4} stroke="#22c55e" strokeDasharray="3 3" label="空腹参考下限" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>该范围暂无血糖记录</div>
+              )}
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: '#f0fdf4' }}>
+                  <th style={{ border: '1px solid #e5e7eb', padding: 8, textAlign: 'left' }}>时间</th>
+                  <th style={{ border: '1px solid #e5e7eb', padding: 8, textAlign: 'left' }}>血糖</th>
+                  <th style={{ border: '1px solid #e5e7eb', padding: 8, textAlign: 'left' }}>测量场景</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exportGlucose.map(record => (
+                  <tr key={`glucose-${record.id}`}>
+                    <td style={{ border: '1px solid #e5e7eb', padding: 8 }}>{new Date(record.recorded_at).toLocaleString('zh-CN')}</td>
+                    <td style={{ border: '1px solid #e5e7eb', padding: 8 }}>{Number(record.value).toFixed(1)} mmol/L</td>
+                    <td style={{ border: '1px solid #e5e7eb', padding: 8 }}>{formatGlucoseContext(record)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )}
+
+        {exportMetrics.heartRate && (
+          <section style={{ marginBottom: 16, breakInside: 'avoid' }}>
+            <h2 style={{ fontSize: 18, margin: '0 0 6px', color: '#1d4ed8' }}>心率趋势</h2>
+            <p style={{ margin: '0 0 10px', color: '#6b7280', fontSize: 12 }}>横轴：日期；纵轴：bpm。蓝色折线为心率平均值；虚线为参考范围提示。</p>
+            <div style={{ height: 230, border: '1px solid #e5e7eb', borderRadius: 10, padding: 12 }}>
+              {exportHeartRateData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={exportHeartRateData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#6b7280' }} label={{ value: '日期', position: 'insideBottom', offset: -4 }} />
+                    <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} label={{ value: 'bpm', angle: -90, position: 'insideLeft' }} />
+                    <Tooltip />
+                    <Legend />
+                    <Area name="心率" type="monotone" dataKey="heart_rate" stroke="#3b82f6" fill="#dbeafe" strokeWidth={2} dot={{ r: 2 }} />
+                    <ReferenceLine y={getHRThresholds(profile?.age, profile?.gender).max} stroke="#ef4444" strokeDasharray="3 3" label="参考上限" />
+                    <ReferenceLine y={getHRThresholds(profile?.age, profile?.gender).min} stroke="#eab308" strokeDasharray="3 3" label="参考下限" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>该范围暂无心率记录</div>
+              )}
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: '#eff6ff' }}>
+                  <th style={{ border: '1px solid #e5e7eb', padding: 8, textAlign: 'left' }}>时间</th>
+                  <th style={{ border: '1px solid #e5e7eb', padding: 8, textAlign: 'left' }}>心率</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exportVitals.filter(v => v.heart_rate).map(record => (
+                  <tr key={`hr-${record.id}`}>
+                    <td style={{ border: '1px solid #e5e7eb', padding: 8 }}>{new Date(record.recorded_at).toLocaleString('zh-CN')}</td>
+                    <td style={{ border: '1px solid #e5e7eb', padding: 8 }}>{record.heart_rate} bpm</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )}
+      </div>
 
       {/* Bulk Action Bar */}
       {isEditMode && selectedRecordKeys.length > 0 && (

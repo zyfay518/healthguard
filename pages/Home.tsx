@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../context/AuthContext';
-import { vitalService, symptomService, profileService, glucoseService } from '../services/api';
+import { vitalService, symptomService, profileService, glucoseService, notificationService } from '../services/api';
 import {
   VitalRecord,
   GlucoseRecord,
@@ -41,6 +41,19 @@ const getTrendText = (values: number[]) => {
   return diff > 0 ? '较前上升' : '较前下降';
 };
 
+const urlBase64ToUint8Array = (base64String: string) => {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; i += 1) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+
+  return outputArray;
+};
+
 const Home: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -49,7 +62,8 @@ const Home: React.FC = () => {
   const [glucoseRecords, setGlucoseRecords] = useState<GlucoseRecord[]>([]);
   const [symptoms, setSymptoms] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [reminderTime, setReminderTime] = useState<{ hour: number; minute: number } | null>(null);
+  const [smartReminderEnabled, setSmartReminderEnabled] = useState(false);
+  const [savingReminder, setSavingReminder] = useState(false);
 
   // Profile state for avatar and name
   const [profile, setProfile] = useState<{ avatar_url?: string; full_name?: string } | null>(null);
@@ -59,10 +73,7 @@ const Home: React.FC = () => {
     loadGlucose();
     loadSymptoms();
     loadProfile();
-    const saved = localStorage.getItem('healthguard_reminder');
-    if (saved) {
-      setReminderTime(JSON.parse(saved));
-    }
+    setSmartReminderEnabled(localStorage.getItem('healthguard_smart_reminder') === 'enabled');
   }, []);
 
   // Load profile with caching (5 minutes)
@@ -92,48 +103,6 @@ const Home: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to load profile', error);
-    }
-  };
-
-  // Notification logic
-  useEffect(() => {
-    if (!reminderTime) return;
-
-    const interval = setInterval(() => {
-      const now = new Date();
-      const currentHour = now.getHours();
-      const currentMinute = now.getMinutes();
-
-      if (currentHour === reminderTime.hour && currentMinute === reminderTime.minute) {
-        checkAndNotify();
-      }
-    }, 60000); // Check every minute
-
-    return () => clearInterval(interval);
-  }, [reminderTime, vitals, symptoms, glucoseRecords]);
-
-  const checkAndNotify = async () => {
-    // Check if notification permission is granted
-    if (Notification.permission !== 'granted') {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') return;
-    }
-
-    // Check if any data exists for TODAY
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const recordedToday = [
-      ...vitals.map(v => new Date(v.recorded_at)),
-      ...glucoseRecords.map(record => new Date(record.recorded_at)),
-      ...symptoms.map(s => new Date(s.created_at || s.recorded_at))
-    ].some(d => d >= today);
-
-    if (!recordedToday) {
-      new Notification('健康助手提醒', {
-        body: '记录时刻到啦！如果今天还没记录血压、血糖或心率，可以按需打卡。',
-        icon: '/icon-512.png'
-      });
     }
   };
 
@@ -168,31 +137,67 @@ const Home: React.FC = () => {
     }
   };
 
-  const handleSaveReminder = async (time: { hour: number; minute: number }) => {
-    localStorage.setItem('healthguard_reminder', JSON.stringify(time));
-    setReminderTime(time);
+  const handleEnableReminder = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      alert('当前浏览器暂不支持推送通知。iOS/Android 请先将应用添加到主屏幕，再从主屏幕图标打开。');
+      return;
+    }
 
-    // Request notification permission
-    if ('Notification' in window) {
-      if (Notification.permission === 'default') {
-        const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-          alert(`提醒设置成功：${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}\n\n⚠️ 但通知权限被拒绝，无法发送推送消息。请在浏览器设置中允许通知。`);
-          return;
-        }
+    setSavingReminder(true);
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        alert('通知权限没有开启。请在系统或浏览器设置里允许通知后再试。');
+        return;
       }
 
-      if (Notification.permission === 'granted') {
-        // Send a test notification to confirm it works
-        new Notification('健康助手', {
-          body: `提醒已设置！每天 ${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')} 将提醒您记录健康数据。`,
-          icon: '/icon-512.png'
-        });
-      } else {
-        alert(`提醒设置成功：${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}\n\n⚠️ 通知权限未授予，无法发送推送消息。`);
+      const publicKey = await notificationService.getVapidPublicKey();
+      if (!publicKey) {
+        alert('后端还没有配置推送公钥，暂时无法开启通知。');
+        return;
       }
-    } else {
-      alert(`提醒设置成功：${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}\n\n⚠️ 此浏览器不支持通知功能。`);
+
+      const registration = await navigator.serviceWorker.ready;
+      const existingSubscription = await registration.pushManager.getSubscription();
+      const subscription = existingSubscription || await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+
+      await notificationService.subscribe(subscription);
+      localStorage.setItem('healthguard_smart_reminder', 'enabled');
+      localStorage.removeItem('healthguard_reminder');
+      setSmartReminderEnabled(true);
+      setShowNotificationModal(false);
+      alert('智能提醒已开启。我们会根据您最近的记录习惯，在可能漏记时提醒您。');
+    } catch (error) {
+      console.error('Failed to enable push reminder', error);
+      alert('开启提醒失败，请稍后重试。');
+    } finally {
+      setSavingReminder(false);
+    }
+  };
+
+  const handleDisableReminder = async () => {
+    setSavingReminder(true);
+    try {
+      const registration = 'serviceWorker' in navigator ? await navigator.serviceWorker.ready : null;
+      const subscription = registration ? await registration.pushManager.getSubscription() : null;
+
+      if (subscription) {
+        await notificationService.unsubscribe(subscription.endpoint);
+        await subscription.unsubscribe();
+      }
+
+      localStorage.removeItem('healthguard_smart_reminder');
+      localStorage.removeItem('healthguard_reminder');
+      setSmartReminderEnabled(false);
+      setShowNotificationModal(false);
+    } catch (error) {
+      console.error('Failed to disable push reminder', error);
+      alert('关闭提醒失败，请稍后重试。');
+    } finally {
+      setSavingReminder(false);
     }
   };
 
@@ -292,32 +297,6 @@ const Home: React.FC = () => {
     getTrendText(glucoseChartData.map(item => item.value).filter(Boolean))
   ), [glucoseChartData]);
 
-  const todayReminder = useMemo(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-
-    const hasBloodPressureToday = vitals.some(v => {
-      const recordedAt = new Date(v.recorded_at);
-      return recordedAt >= start && v.systolic > 0 && v.diastolic > 0;
-    });
-    const hasGlucoseToday = glucoseRecords.some(record => new Date(record.recorded_at) >= start);
-    const hasHeartRateToday = vitals.some(v => {
-      const recordedAt = new Date(v.recorded_at);
-      return recordedAt >= start && v.heart_rate > 0;
-    });
-
-    const missing = [
-      !hasBloodPressureToday ? '血压' : null,
-      !hasGlucoseToday ? '血糖' : null,
-      !hasHeartRateToday ? '心率' : null,
-    ].filter(Boolean) as string[];
-
-    return {
-      missing,
-      completed: missing.length === 0,
-    };
-  }, [vitals, glucoseRecords]);
-
   // Get last record time
   const lastRecordTime = useMemo(() => {
     if (!latestVital) return '暂无记录';
@@ -359,9 +338,9 @@ const Home: React.FC = () => {
           </div>
           <button
             onClick={() => setShowNotificationModal(true)}
-            className="flex items-center justify-center rounded-full size-10 bg-white dark:bg-[#2a1d36] shadow-sm text-primary hover:bg-primary/5 transition-colors"
+            className={`flex items-center justify-center rounded-full size-10 bg-white dark:bg-[#2a1d36] shadow-sm transition-colors ${smartReminderEnabled ? 'text-green-600 hover:bg-green-50 dark:hover:bg-green-500/10' : 'text-primary hover:bg-primary/5'}`}
           >
-            <span className="material-symbols-outlined">notifications</span>
+            <span className="material-symbols-outlined">{smartReminderEnabled ? 'notifications_active' : 'notifications'}</span>
           </button>
         </div>
       </header>
@@ -375,28 +354,6 @@ const Home: React.FC = () => {
           </div>
           <span className="size-2 rounded-full bg-green-500 animate-pulse"></span>
         </div>
-      </div>
-
-      <div className="px-4 pb-2">
-        <button
-          onClick={() => navigate('/symptoms')}
-          className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border shadow-sm active:scale-[0.99] transition-transform ${todayReminder.completed ? 'bg-green-50 dark:bg-green-900/20 border-green-100 dark:border-green-800/30' : 'bg-amber-50 dark:bg-amber-900/20 border-amber-100 dark:border-amber-800/30'}`}
-        >
-          <div className="flex items-center gap-2 text-left">
-            <span className={`material-symbols-outlined text-[20px] ${todayReminder.completed ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
-              {todayReminder.completed ? 'task_alt' : 'notifications_active'}
-            </span>
-            <div>
-              <p className={`text-sm font-bold ${todayReminder.completed ? 'text-green-900 dark:text-green-100' : 'text-amber-900 dark:text-amber-100'}`}>
-                {todayReminder.completed ? '今日已完成记录' : `今日待记录：${todayReminder.missing.join('、')}`}
-              </p>
-              <p className={`text-xs ${todayReminder.completed ? 'text-green-700/70 dark:text-green-200/70' : 'text-amber-700/70 dark:text-amber-200/70'}`}>
-                {todayReminder.completed ? '血压、血糖、心率今天都有记录' : '按需记录即可，可以跳过暂时不测的项目'}
-              </p>
-            </div>
-          </div>
-          <span className={`material-symbols-outlined text-[20px] ${todayReminder.completed ? 'text-green-500' : 'text-amber-500'}`}>chevron_right</span>
-        </button>
       </div>
 
       {/* Vitals Cards */}
@@ -628,8 +585,10 @@ const Home: React.FC = () => {
       <ReminderModal
         isOpen={showNotificationModal}
         onClose={() => setShowNotificationModal(false)}
-        onSave={handleSaveReminder}
-        initialTime={reminderTime || undefined}
+        isEnabled={smartReminderEnabled}
+        isSaving={savingReminder}
+        onEnable={handleEnableReminder}
+        onDisable={handleDisableReminder}
       />
     </div>
   );
