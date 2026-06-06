@@ -9,11 +9,20 @@ const router = express.Router();
 
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || '';
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || '';
-const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@healthguard.local';
+const rawVapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@healthguard.local';
+const vapidSubject = rawVapidSubject.includes(':') ? rawVapidSubject : `mailto:${rawVapidSubject}`;
 const cronSecret = process.env.CRON_SECRET || '';
+let pushConfigured = false;
+let pushConfigError = '';
 
-if (vapidPublicKey && vapidPrivateKey) {
-    webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+try {
+    if (vapidPublicKey && vapidPrivateKey) {
+        webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+        pushConfigured = true;
+    }
+} catch (error) {
+    pushConfigError = formatError(error, 'Invalid push notification configuration');
+    console.error('Push notification configuration failed:', pushConfigError);
 }
 
 const subscriptionSchema = z.object({
@@ -70,6 +79,9 @@ const getDueReminder = (records: Array<{ recorded_at?: string }>) => {
 };
 
 router.get('/vapid-public-key', (_req, res) => {
+    if (!pushConfigured) {
+        return res.status(503).json({ error: pushConfigError || 'Missing VAPID keys' });
+    }
     res.json({ publicKey: vapidPublicKey });
 });
 

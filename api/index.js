@@ -12,11 +12,20 @@ if (supabaseUrl && supabaseServiceKey) {
 
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || '';
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || '';
-const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@healthguard.local';
+const rawVapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@healthguard.local';
+const vapidSubject = rawVapidSubject.includes(':') ? rawVapidSubject : `mailto:${rawVapidSubject}`;
 const cronSecret = process.env.CRON_SECRET || '';
+let pushConfigured = false;
+let pushConfigError = '';
 
-if (vapidPublicKey && vapidPrivateKey) {
-    webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+try {
+    if (vapidPublicKey && vapidPrivateKey) {
+        webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+        pushConfigured = true;
+    }
+} catch (error) {
+    pushConfigError = formatError(error, 'Invalid push notification configuration');
+    console.error('Push notification configuration failed:', pushConfigError);
 }
 
 function formatError(error, fallback = 'Internal server error') {
@@ -130,8 +139,8 @@ function getDueReminder(records) {
 }
 
 async function checkDueNotifications() {
-    if (!vapidPublicKey || !vapidPrivateKey) {
-        throw new Error('Missing VAPID keys');
+    if (!pushConfigured) {
+        throw new Error(pushConfigError || 'Missing VAPID keys');
     }
 
     const { data: subscriptions, error: subError } = await supabase
